@@ -1,13 +1,15 @@
 flowchart TD
-  A["Bronze: raw.csv"] --> B["Silver: transactions_line_items"]
+  subgraph shared_layer["Shared Data Layer"]
+    A["Bronze: raw.csv"] --> B["Silver: transactions_line_items"]
+  end
 
-  subgraph R["Recommender Engine"]
+  subgraph recommender_engine["Recommender Engine"]
     B --> C["Gold: interaction_events"]
     C --> E["Gold: user_item_splits"]
     E --> G["Recommender Training/Evaluation"]
   end
 
-  subgraph U["Growth Uplift Engine"]
+  subgraph uplift_engine["Growth Uplift Engine"]
     B --> D["Gold: user_features_asof"]
     B --> L["Gold: labels"]
     D --> T["Gold: uplift_train_dataset"]
