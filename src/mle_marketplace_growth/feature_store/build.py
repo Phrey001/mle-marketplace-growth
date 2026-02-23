@@ -77,12 +77,18 @@ def main() -> None:
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
 
     sql_dir = Path(__file__).resolve().parent / "sql"
-    silver_sql = (sql_dir / "silver_transactions_line_items.sql").read_text(encoding="utf-8")
-    interactions_sql = (sql_dir / "gold_interaction_events.sql").read_text(encoding="utf-8")
-    user_item_splits_sql_template = (sql_dir / "gold_user_item_splits.sql").read_text(encoding="utf-8")
-    labels_sql_template = (sql_dir / "gold_labels.sql").read_text(encoding="utf-8")
-    user_features_sql_template = (sql_dir / "gold_user_features_asof.sql").read_text(encoding="utf-8")
-    uplift_train_sql_template = (sql_dir / "gold_uplift_train_dataset.sql").read_text(encoding="utf-8")
+    silver_sql = (sql_dir / "silver" / "transactions_line_items.sql").read_text(encoding="utf-8")
+    interactions_sql = (sql_dir / "gold" / "recommender" / "interaction_events.sql").read_text(encoding="utf-8")
+    user_item_splits_sql_template = (
+        sql_dir / "gold" / "recommender" / "user_item_splits.sql"
+    ).read_text(encoding="utf-8")
+    labels_sql_template = (sql_dir / "gold" / "growth_uplift" / "labels.sql").read_text(encoding="utf-8")
+    user_features_sql_template = (
+        sql_dir / "gold" / "growth_uplift" / "user_features_asof.sql"
+    ).read_text(encoding="utf-8")
+    uplift_train_sql_template = (
+        sql_dir / "gold" / "growth_uplift" / "uplift_train_dataset.sql"
+    ).read_text(encoding="utf-8")
 
     silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"
     interactions_path = output_root / "gold" / "feature_store" / "interaction_events" / "interaction_events.csv"
