@@ -13,7 +13,7 @@ Primary source (best for readability/editing):
 
 - `docs/feature_store/diagrams/feature_store_target_model.mmd`
 
-Rendered preview (embedded larger):
+Rendered preview .svg (embedded larger):
 
 <img src="./feature_store_target_model.svg" width="1100" />
 
