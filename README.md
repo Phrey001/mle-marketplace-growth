@@ -26,6 +26,7 @@ The result is lower incremental revenue and inefficient budget use.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+PYTHONPATH=src .venv/bin/python -m mle_marketplace_growth.feature_store.build
 ```
 
 ## Docs

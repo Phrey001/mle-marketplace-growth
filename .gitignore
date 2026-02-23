@@ -19,6 +19,7 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+node_modules/
 
 # Local env/config
 .env
@@ -31,6 +32,5 @@ dist/
 # OS files
 .DS_Store
 
-# Keep dataset checked in
-!data/
-!data/**
+# Data artifacts
+data/
