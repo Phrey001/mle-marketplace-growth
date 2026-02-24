@@ -7,7 +7,7 @@ Flow: Bronze (`data/bronze/online_retail_ii/raw.csv`) → Silver (`data/silver/t
 Build command:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m mle_marketplace_growth.feature_store.build
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build
 ```
 
 This single build command runs transformations, executes DQ checks, and writes the run manifest.
@@ -29,6 +29,7 @@ Why `--as-of-date` matters:
 - Feature store should represent “what was known at that time,” not future data.
 - Example: running with `--as-of-date 2011-11-09` writes growth-uplift artifacts under `data/gold/feature_store/growth_uplift/*/as_of_date=2011-11-09/`.
 - Running again with another date (for example `2011-12-09`) creates a separate snapshot folder, so backtests/reruns can compare model behavior across time slices consistently.
+- For uplift training quality, avoid using the latest date as `as_of_date` because the future 30-day label window may be empty.
 
 Key references:
 

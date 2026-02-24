@@ -1,0 +1,49 @@
+{
+  "validation_rows": 1147,
+  "inferred_treatment_rate": 0.476896,
+  "outcome_summary": {
+    "nonzero_outcome_rows": 302,
+    "outcome_sum": 229704.02
+  },
+  "interpretation_kpis": {
+    "top_10_percent_lift_per_user": 301.667741,
+    "all_users_lift_per_user": -0.566881,
+    "top10_vs_all_users_lift_delta": 302.234622
+  },
+  "sanity": {
+    "status": "ok",
+    "flags": []
+  },
+  "policy_lift": [
+    {
+      "top_fraction": 0.1,
+      "selected_users": 114,
+      "estimated_incremental_net_revenue_total": 34390.1225,
+      "estimated_incremental_net_revenue_per_user": 301.667741
+    },
+    {
+      "top_fraction": 0.2,
+      "selected_users": 229,
+      "estimated_incremental_net_revenue_total": 38227.815,
+      "estimated_incremental_net_revenue_per_user": 166.93369
+    },
+    {
+      "top_fraction": 0.3,
+      "selected_users": 344,
+      "estimated_incremental_net_revenue_total": 32875.0013,
+      "estimated_incremental_net_revenue_per_user": 95.566864
+    },
+    {
+      "top_fraction": 0.5,
+      "selected_users": 573,
+      "estimated_incremental_net_revenue_total": 40558.0683,
+      "estimated_incremental_net_revenue_per_user": 70.781969
+    },
+    {
+      "top_fraction": 1.0,
+      "selected_users": 1147,
+      "estimated_incremental_net_revenue_total": -650.2123,
+      "estimated_incremental_net_revenue_per_user": -0.566881
+    }
+  ]
+}
