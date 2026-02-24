@@ -11,6 +11,6 @@ The Markdown documents are organized by purpose:
   - `docs/recommender/spec.md`
 - **Shared data/feature conventions**
   - `docs/feature_store/overview.md`
-  - `docs/feature_store/dq.md`
+  - `docs/feature_store/dq_spec.md`
   - `docs/feature_store/data_dictionary.md`
   - `docs/feature_store/diagrams/` (Mermaid source and rendered diagram assets)

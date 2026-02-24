@@ -3,8 +3,8 @@ set -euo pipefail
 
 INPUT_DIR="docs/feature_store/diagrams"
 OUTPUT_DIR="docs/feature_store/diagrams"
-INPUT_FILE="${INPUT_DIR}/feature_store_target_model.mmd"
-OUTPUT_FILE="${OUTPUT_DIR}/feature_store_target_model.svg"
+INPUT_FILE="${INPUT_DIR}/feature_store_target_data_model.mmd"
+OUTPUT_FILE="${OUTPUT_DIR}/feature_store_target_data_model.svg"
 MMDC="./node_modules/.bin/mmdc"
 
 if [[ ! -x "${MMDC}" ]]; then

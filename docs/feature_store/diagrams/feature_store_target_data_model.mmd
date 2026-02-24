@@ -1,0 +1,21 @@
+flowchart TD
+  subgraph shared_layer["Shared Data Layer"]
+    A["<b>Bronze: raw.csv</b><br/><b>Purpose:</b> raw source snapshot"] --> B["<b>Silver: transactions_line_items</b><br/><b>Purpose:</b> cleaned transaction line items<br/><b>PK:</b> invoice_id, item_id, event_ts"]
+  end
+
+  subgraph recommender_engine["Recommender Engine"]
+    B --> C["<b>Gold: interaction_events</b><br/><b>Purpose:</b> positive user-item interactions<br/><b>PK:</b> user_id, item_id, event_ts, invoice_id"]
+    C --> E["<b>Gold: user_item_splits</b><br/><b>Purpose:</b> train/val/test split assignments<br/><b>PK:</b> user_id, item_id, event_ts, invoice_id, split_version, split"]
+    E --> G["Recommender Training/Evaluation"]
+  end
+
+  subgraph uplift_engine["Growth Uplift Engine"]
+    B --> D["<b>Gold: user_features_asof</b><br/><b>Purpose:</b> point-in-time user features<br/><b>PK:</b> user_id, as_of_date"]
+    B --> L["<b>Gold: labels</b><br/><b>Purpose:</b> future-window outcomes per user/date<br/><b>PK:</b> user_id, as_of_date, label_name"]
+    D --> T["<b>Gold: uplift_train_dataset</b><br/><b>Purpose:</b> model-ready uplift training dataset<br/><b>PK:</b> user_id, as_of_date"]
+    L --> T
+    T --> F["Uplift Training/Evaluation"]
+  end
+
+  N["<b>Notes:</b><br/>1) <b>PK</b> lines are high-level key columns only; full PK/schema is in docs/feature_store/data_dictionary.md.<br/><br/>2) <b>Key control columns:</b><br/>- <b>as_of_date:</b> point-in-time uplift snapshot key<br/>- <b>split:</b> recommender train/val/test partition key<br/>- <b>split_version:</b> split-strategy version key"]
+  N -.-> B

@@ -1,0 +1,1 @@
+DESCRIBE SELECT * FROM raw_source;

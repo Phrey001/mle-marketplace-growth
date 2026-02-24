@@ -29,6 +29,8 @@ pip install -r requirements.txt
 PYTHONPATH=src .venv/bin/python -m mle_marketplace_growth.feature_store.build
 ```
 
+The build command also runs feature-store DQ checks and writes a run manifest.
+
 ## Docs
 
 - Architecture source of truth: `docs/architecture.pptx`
