@@ -9,5 +9,5 @@ SELECT
 FROM silver_transactions_line_items
 WHERE quantity > 0
   AND user_id <> ''
+  {recommender_time_filters}
 ORDER BY event_ts, user_id, item_id;
-

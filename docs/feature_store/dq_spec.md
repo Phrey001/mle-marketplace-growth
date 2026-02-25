@@ -1,6 +1,6 @@
 # Feature Store Data Quality Checks
 
-Implemented data quality checks and cleaning behavior for the current pipeline.
+Implemented data quality checks and cleaning behavior for the feature-store pipelines that feed recommender and purchase propensity engines.
 
 | Check ID | Dataset | Check | Rule | Severity | Action on Failure |
 | --- | --- | --- | --- | --- | --- |
@@ -11,7 +11,7 @@ Implemented data quality checks and cleaning behavior for the current pipeline.
 | `DQ_GOLD_003` | Gold `labels` | Label metadata validity | `label_name` in `{net_revenue_30d,purchase_30d}` and `window_days=30` | Error | Stop pipeline |
 | `DQ_GOLD_005` | Gold `user_item_splits` | Split validity | `split` in `{train,val,test}` and `split_version` non-empty | Error | Stop pipeline |
 | `DQ_GOLD_006` | Gold `user_item_splits` | Chronology | `max(train_ts) <= min(val_ts) <= min(test_ts)` | Error | Stop pipeline |
-| `DQ_GOLD_009` | Gold `uplift_train_dataset` | Unique train grain | Unique `(user_id, as_of_date)` | Error | Stop pipeline |
+| `DQ_GOLD_009` | Gold `propensity_train_dataset` | Unique train grain | Unique `(user_id, as_of_date)` | Error | Stop pipeline |
 
 Silver cleaning summary (`transactions_line_items`):
 

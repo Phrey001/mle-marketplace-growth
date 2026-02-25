@@ -9,13 +9,13 @@ flowchart TD
     E --> G["Recommender Training/Evaluation"]
   end
 
-  subgraph uplift_engine["Growth Uplift Engine"]
-    B --> D["<b>Gold: user_features_asof</b><br/><b>Purpose:</b> point-in-time user features<br/><b>PK:</b> user_id, as_of_date"]
-    B --> L["<b>Gold: labels</b><br/><b>Purpose:</b> future-window outcomes per user/date<br/><b>PK:</b> user_id, as_of_date, label_name"]
-    D --> T["<b>Gold: uplift_train_dataset</b><br/><b>Purpose:</b> model-ready uplift training dataset<br/><b>PK:</b> user_id, as_of_date"]
+  subgraph propensity_engine["Purchase Propensity Engine"]
+    B --> D["<b>Gold: user_features_asof</b><br/><b>Purpose:</b> point-in-time user features with 30/60/90/120 lookback rollups<br/><b>PK:</b> user_id, as_of_date"]
+    B --> L["<b>Gold: labels</b><br/><b>Purpose:</b> future-window outcomes per user/date (30/60/90 horizons)<br/><b>PK:</b> user_id, as_of_date, label_name"]
+    D --> T["<b>Gold: propensity_train_dataset</b><br/><b>Purpose:</b> model-ready propensity training dataset<br/><b>PK:</b> user_id, as_of_date"]
     L --> T
-    T --> F["Uplift Training/Evaluation"]
+    T --> F["Purchase Propensity Training + Offline Policy Evaluation"]
   end
 
-  N["<b>Notes:</b><br/>1) <b>PK</b> lines are high-level key columns only; full PK/schema is in docs/feature_store/data_dictionary.md.<br/><br/>2) <b>Key control columns:</b><br/>- <b>as_of_date:</b> point-in-time uplift snapshot key<br/>- <b>split:</b> recommender train/val/test partition key<br/>- <b>split_version:</b> split-strategy version key"]
+  N["<b>Notes:</b><br/>1) <b>PK</b> lines are high-level key columns only; full PK/schema is in docs/feature_store/data_dictionary.md.<br/><br/>2) <b>Key control columns:</b><br/>- <b>as_of_date:</b> point-in-time propensity snapshot key<br/>- <b>split:</b> recommender train/val/test partition key<br/>- <b>split_version:</b> split-strategy version key<br/><br/>3) Feature store materializes multiple windows, while main propensity pipeline default remains 30d target + 90d lookback."]
   N -.-> B

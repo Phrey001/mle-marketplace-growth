@@ -1,0 +1,144 @@
+{
+  "scope": "offline_policy_evaluation_not_causal_promotional_incrementality",
+  "inputs": {
+    "scores_csv": "artifacts/purchase_propensity/prediction_scores.csv"
+  },
+  "assumptions": {
+    "budget": 5000.0,
+    "cost_per_user": 5.0,
+    "allocation_rule": "target highest expected_value_score until budget exhausted"
+  },
+  "selection": {
+    "candidate_users": 5789,
+    "targeted_users": 1000,
+    "budget_spend": 5000.0,
+    "budget_unused": 0.0
+  },
+  "kpis": {
+    "expected_value_total": 465804.738101,
+    "expected_value_per_targeted_user": 465.804738,
+    "expected_value_per_dollar": 93.16094762
+  },
+  "top_targets_preview": [
+    {
+      "user_id": "17450",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.913416,
+      "expected_value_score": 16932.610722
+    },
+    {
+      "user_id": "17511",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.873569,
+      "expected_value_score": 14164.837135
+    },
+    {
+      "user_id": "18102",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.909362,
+      "expected_value_score": 13483.850884
+    },
+    {
+      "user_id": "14646",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.906306,
+      "expected_value_score": 10737.142661
+    },
+    {
+      "user_id": "14096",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.862862,
+      "expected_value_score": 10094.142023
+    },
+    {
+      "user_id": "16029",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.905956,
+      "expected_value_score": 9689.293283
+    },
+    {
+      "user_id": "12415",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.824953,
+      "expected_value_score": 9304.554113
+    },
+    {
+      "user_id": "14156",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.892401,
+      "expected_value_score": 8044.125023
+    },
+    {
+      "user_id": "14298",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.852733,
+      "expected_value_score": 6022.397231
+    },
+    {
+      "user_id": "17389",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.777614,
+      "expected_value_score": 5603.900284
+    },
+    {
+      "user_id": "15838",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.449883,
+      "expected_value_score": 5514.964152
+    },
+    {
+      "user_id": "14607",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.838361,
+      "expected_value_score": 5418.60317
+    },
+    {
+      "user_id": "17857",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.730199,
+      "expected_value_score": 5350.400096
+    },
+    {
+      "user_id": "16684",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.85192,
+      "expected_value_score": 5341.186516
+    },
+    {
+      "user_id": "14866",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.762433,
+      "expected_value_score": 5089.437437
+    },
+    {
+      "user_id": "17841",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.898234,
+      "expected_value_score": 4645.989664
+    },
+    {
+      "user_id": "12477",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.51346,
+      "expected_value_score": 4326.502051
+    },
+    {
+      "user_id": "13694",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.854357,
+      "expected_value_score": 3709.777797
+    },
+    {
+      "user_id": "15769",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.847333,
+      "expected_value_score": 3699.035701
+    },
+    {
+      "user_id": "13089",
+      "as_of_date": "2011-11-09",
+      "propensity_score": 0.909705,
+      "expected_value_score": 3573.470683
+    }
+  ]
+}

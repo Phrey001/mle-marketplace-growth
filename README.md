@@ -2,56 +2,43 @@
 
 An end-to-end machine learning project for marketplace revenue growth via two complementary ML levers:
 
-- Growth uplift decisioning (promotion allocation)
-- Retrieval/personalization (two-tower candidate generation)
+- Purchase propensity scoring + incentive allocation
+- Personalized product candidate generation
 
 ## Problem Statement
 
 Marketplaces often lose revenue in two ways:
 
-- Promotions are over-distributed to users who would have purchased anyway.
+- Incentives are distributed without strong user-level targeting.
 - Product discovery is weak, so relevant items are not surfaced early.
 
 The result is lower incremental revenue and inefficient budget use.
 
 ## How This Project Addresses It
 
-- **Growth Uplift Decisioning:** estimates incremental impact of treatment and prioritizes users under budget/capacity constraints.
-- **Retrieval/Personalization:** learns user-item affinity to generate better top-K candidates for downstream ranking.
+- **Purchase Propensity:** predicts near-term purchase likelihood, ranks users by expected value under budget constraints, and compares targeting policies offline.
+- **Personalized Retrieval:** learns user-item affinity to surface more relevant candidate products.
 - **Shared Feature Layer:** enforces point-in-time features and time-based evaluation to reduce leakage and improve reproducibility.
+- **Business KPI Intent:** improve revenue per incentive dollar and improve relevance of surfaced items.
 
-## Quickstart
+## Getting Started
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+- Run setup, recommended commands, output checks, tests, and automated interpretation review from `docs/quickstart.md`.
+- Modeling choices (scaling, spend capping, calibration) are documented in `docs/purchase_propensity/spec.md`.
+- Window sensitivity now evaluates materialized feature-lookback profiles (`60/90/120`) for model-design comparison; main pipeline default remains `30d` target + `90d` lookback.
 
-Recommended uplift run (use an earlier snapshot date so future labels are non-empty):
+## Key Limitations
 
-```bash
-# 1) Build feature store at an earlier as_of_date for non-empty uplift label window
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build --as-of-date 2011-11-09
+- **Not included:** online A/B testing. Why: this repo is local/offline and has no live traffic.
+- **Not included:** offline causal incrementality estimation for promotions (for example, “did the promo itself cause extra purchases?”). Why: no randomized treatment assignment or reliable promo-exposure logs in this dataset.
+- **Production recommendation (out of scope for this repo):** run randomized A/B testing for promotion decisions before broad rollout to measure true incremental impact.
 
-# 2) Train uplift model on matching uplift_train_dataset snapshot
-PYTHONPATH=src python -m mle_marketplace_growth.growth_uplift.train --input-csv data/gold/feature_store/growth_uplift/uplift_train_dataset/as_of_date=2011-11-09/uplift_train_dataset.csv
+## Policy Interpretation
 
-# 3) Score matching user_features snapshot, then evaluate policy lift
-PYTHONPATH=src python -m mle_marketplace_growth.growth_uplift.predict --input-csv data/gold/feature_store/growth_uplift/user_features_asof/as_of_date=2011-11-09/user_features_asof.csv
-PYTHONPATH=src python -m mle_marketplace_growth.growth_uplift.evaluate
-
-# 4) Run budget-constrained policy simulation from response proxies
-PYTHONPATH=src python -m mle_marketplace_growth.growth_uplift.policy_simulation
-```
-
-Review `artifacts/growth_uplift/evaluation.json` (`sanity`, `interpretation_kpis`) and `artifacts/growth_uplift/evaluation_policy_lift.png` for high-level policy quality.
-If `sanity.flags` includes `all_outcomes_zero_check_as_of_date_window`, rerun with an earlier `--as-of-date`.
-Check `artifacts/growth_uplift/train_metrics.json` for `selected_model_name` and candidate model comparison.
-Current uplift evaluation is simulation-only (synthetic treatment assignment) and should be interpreted as model-logic validation, not direct business-impact evidence.
-For business-impact claims, use real treatment logs (or a fully synthetic sandbox where outcomes are also simulated from explicit promotion assumptions).
-Policy simulation output (`artifacts/growth_uplift/policy_simulation.json`) is a proxy-based targeting exercise under budget constraints, not causal ground truth.
-Use `artifacts/growth_uplift/policy_simulation_budget_curve.png` for a quick visual of cumulative proxy lift versus budget spend.
+- The 3-policy comparison is implemented: ML expected-value targeting, random baseline, and RFM heuristic baseline.
+- Budget is used to decide **who to target** (allocation logic), not to simulate behavior change from incentive exposure.
+- Results compare policy performance on historical holdout outcomes; they do **not** estimate causal incrementality.
+- Policy definitions and design details are documented in `docs/purchase_propensity/spec.md`.
 
 ## Docs
 
