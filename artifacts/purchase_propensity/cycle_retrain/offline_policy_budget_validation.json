@@ -1,0 +1,46 @@
+{
+  "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality",
+  "inputs": {
+    "scores_csv": "artifacts/purchase_propensity/cycle_retrain/validation_predictions.csv"
+  },
+  "assumptions": {
+    "budget": 5000.0,
+    "cost_per_user": 5.0,
+    "target_count_by_budget": 1000,
+    "policy_scoring_columns": {
+      "ml_top_expected_value": "expected_value_score",
+      "random_baseline": "random_policy_score",
+      "rfm_heuristic": "rfm_policy_score"
+    }
+  },
+  "policy_comparison": [
+    {
+      "policy": "ml_top_expected_value",
+      "targeted_users": 1000,
+      "budget_spend": 5000.0,
+      "actual_purchase_rate": 0.721,
+      "actual_revenue_total": 1381284.86,
+      "actual_revenue_per_targeted_user": 1381.28486
+    },
+    {
+      "policy": "random_baseline",
+      "targeted_users": 1000,
+      "budget_spend": 5000.0,
+      "actual_purchase_rate": 0.386,
+      "actual_revenue_total": 447128.83,
+      "actual_revenue_per_targeted_user": 447.12883
+    },
+    {
+      "policy": "rfm_heuristic",
+      "targeted_users": 1000,
+      "budget_spend": 5000.0,
+      "actual_purchase_rate": 0.727,
+      "actual_revenue_total": 1365307.55,
+      "actual_revenue_per_targeted_user": 1365.30755
+    }
+  ],
+  "interpretation_kpis": {
+    "ml_vs_random_revenue_per_user_delta": 934.15603,
+    "ml_vs_rfm_revenue_per_user_delta": 15.97731
+  }
+}

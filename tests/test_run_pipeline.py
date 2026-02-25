@@ -8,18 +8,46 @@ from mle_marketplace_growth.purchase_propensity import run_pipeline
 
 
 class RunPipelineArgValidationTest(unittest.TestCase):
-    def test_out_of_time_requires_multiple_snapshots(self) -> None:
+    STRICT_TWELVE_DATES = ",".join(
+        [
+            "2010-12-09",
+            "2011-01-09",
+            "2011-02-09",
+            "2011-03-09",
+            "2011-04-09",
+            "2011-05-09",
+            "2011-06-09",
+            "2011-07-09",
+            "2011-08-09",
+            "2011-09-09",
+            "2011-10-09",
+            "2011-11-09",
+        ]
+    )
+
+    def test_strict_mode_requires_exactly_twelve_snapshots(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--validation-mode",
-            "out_of_time",
             "--train-as-of-dates",
             "2011-11-09",
         ]
         with patch("sys.argv", argv):
             with self.assertRaisesRegex(
                 ValueError,
-                "--validation-mode out_of_time requires at least 2 --train-as-of-dates",
+                "Strict architecture split requires exactly 12 --train-as-of-dates",
+            ):
+                run_pipeline.main()
+
+    def test_out_of_time_10_1_1_requires_exactly_twelve_snapshots(self) -> None:
+        argv = [
+            "run_pipeline.py",
+            "--train-as-of-dates",
+            "2011-01-09,2011-02-09,2011-03-09",
+        ]
+        with patch("sys.argv", argv):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Strict architecture split requires exactly 12 --train-as-of-dates",
             ):
                 run_pipeline.main()
 
@@ -47,19 +75,19 @@ class RunPipelineArgValidationTest(unittest.TestCase):
         argv = [
             "run_pipeline.py",
             "--train-as-of-dates",
-            "2011-11-09,2011-12-09",
+            self.STRICT_TWELVE_DATES,
             "--prediction-window-days",
-            "60",
+            "45",
         ]
         with patch("sys.argv", argv):
-            with self.assertRaisesRegex(ValueError, "implemented for 30-day labels only"):
+            with self.assertRaisesRegex(ValueError, "--prediction-window-days must be one of"):
                 run_pipeline.main()
 
     def test_feature_lookback_window_rejects_unsupported_values(self) -> None:
         argv = [
             "run_pipeline.py",
             "--train-as-of-dates",
-            "2011-11-09,2011-12-09",
+            self.STRICT_TWELVE_DATES,
             "--feature-lookback-days",
             "30",
         ]
@@ -71,12 +99,12 @@ class RunPipelineArgValidationTest(unittest.TestCase):
         argv = [
             "run_pipeline.py",
             "--train-as-of-dates",
-            "2011-11-09,2011-12-09",
+            self.STRICT_TWELVE_DATES,
             "--feature-lookback-days",
-            "120",
+            "150",
         ]
         with patch("sys.argv", argv):
-            with self.assertRaisesRegex(ValueError, "implemented for 90-day feature lookback only"):
+            with self.assertRaisesRegex(ValueError, "--feature-lookback-days must be one of"):
                 run_pipeline.main()
 
     def test_merge_train_datasets_combines_rows_with_one_header(self) -> None:
@@ -119,7 +147,22 @@ class RunPipelineArgValidationTest(unittest.TestCase):
                 with patch(
                     "mle_marketplace_growth.purchase_propensity.run_pipeline._read_config_file",
                     return_value={
-                        "train_as_of_dates": "2011-11-09",
+                        "train_as_of_dates": ",".join(
+                            [
+                                "2010-12-09",
+                                "2011-01-09",
+                                "2011-02-09",
+                                "2011-03-09",
+                                "2011-04-09",
+                                "2011-05-09",
+                                "2011-06-09",
+                                "2011-07-09",
+                                "2011-08-09",
+                                "2011-09-09",
+                                "2011-10-09",
+                                "2011-11-09",
+                            ]
+                        ),
                         "score_as_of_date": "2011-11-09",
                     },
                 ):

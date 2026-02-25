@@ -141,19 +141,26 @@ def main() -> None:
     # ===== Build Silver + Resolve As-Of Date =====
     connection.execute(silver_sql)
 
-    propensity_as_of_date_arg = args.purchase_propensity_as_of_date or args.as_of_date
-    if propensity_as_of_date_arg:
-        propensity_as_of_date = datetime.strptime(propensity_as_of_date_arg, "%Y-%m-%d").date()
+    propensity_as_of_date = None
+    labels_path = None
+    features_path = None
+    propensity_train_path = None
+    if "purchase_propensity" in build_engines:
+        propensity_as_of_date_arg = args.purchase_propensity_as_of_date or args.as_of_date
+        if propensity_as_of_date_arg:
+            propensity_as_of_date = datetime.strptime(propensity_as_of_date_arg, "%Y-%m-%d").date()
+        else:
+            as_of_value = connection.execute(max_silver_event_date_sql).fetchone()[0]
+            if as_of_value is None:
+                raise ValueError("No rows in silver_transactions_line_items; cannot resolve as_of_date")
+            propensity_as_of_date = as_of_value
+        as_of_partition = f"as_of_date={propensity_as_of_date.isoformat()}"
+        labels_path = propensity_root / "labels" / as_of_partition / "labels.csv"
+        features_path = propensity_root / "user_features_asof" / as_of_partition / "user_features_asof.csv"
+        propensity_train_path = propensity_root / "propensity_train_dataset" / as_of_partition / "propensity_train_dataset.csv"
+        manifest_path = propensity_root / "_meta" / as_of_partition / "run_manifest.json"
     else:
-        as_of_value = connection.execute(max_silver_event_date_sql).fetchone()[0]
-        if as_of_value is None:
-            raise ValueError("No rows in silver_transactions_line_items; cannot resolve as_of_date")
-        propensity_as_of_date = as_of_value
-    as_of_partition = f"as_of_date={propensity_as_of_date.isoformat()}"
-    labels_path = propensity_root / "labels" / as_of_partition / "labels.csv"
-    features_path = propensity_root / "user_features_asof" / as_of_partition / "user_features_asof.csv"
-    propensity_train_path = propensity_root / "propensity_train_dataset" / as_of_partition / "propensity_train_dataset.csv"
-    manifest_path = propensity_root / "_meta" / as_of_partition / "run_manifest.json"
+        manifest_path = gold_root / "_meta" / "run_manifest.json"
     interactions_path = recommender_root / "interaction_events" / "interaction_events.csv"
     user_item_splits_path = recommender_root / "user_item_splits" / "user_item_splits.csv"
 
@@ -237,7 +244,7 @@ def main() -> None:
         "built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "input": {"path": str(input_csv)},
         "params": {
-            "purchase_propensity_as_of_date": propensity_as_of_date.isoformat(),
+            "purchase_propensity_as_of_date": propensity_as_of_date.isoformat() if propensity_as_of_date else None,
             "build_engines": sorted(build_engines),
             "recommender_min_event_date": args.recommender_min_event_date,
             "recommender_max_event_date": args.recommender_max_event_date,

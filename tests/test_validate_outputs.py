@@ -18,26 +18,29 @@ class ValidateOutputsTest(unittest.TestCase):
                 artifacts / "train_metrics.json",
                 {
                     "selected_model_name": "logistic_regression",
-                    "model_candidates": [
+                    "propensity_model_candidates": [
                         {"model_name": "logistic_regression", "roc_auc": 0.7, "average_precision": 0.5}
                     ],
                 },
             )
             self._write_json(
-                artifacts / "evaluation.json",
+                artifacts / "offline_policy_budget_validation.json",
                 {
                     "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 10.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0},
-                        {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": 9.0},
+                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 10.0, "targeted_users": 100, "budget_spend": 500.0},
+                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 100, "budget_spend": 500.0},
+                        {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": 9.0, "targeted_users": 100, "budget_spend": 500.0},
                     ]
                 },
             )
             self._write_json(
-                artifacts / "offline_policy_evaluation.json",
+                artifacts / "offline_policy_budget_test.json",
                 {
-                    "selection": {"targeted_users": 100, "budget_spend": 500.0},
-                    "kpis": {"expected_value_per_targeted_user": 10.0, "expected_value_per_dollar": 2.0},
+                    "policy_comparison": [
+                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 10.0, "targeted_users": 100, "budget_spend": 500.0},
+                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 100, "budget_spend": 500.0},
+                        {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": 9.0, "targeted_users": 100, "budget_spend": 500.0},
+                    ]
                 },
             )
             self._write_json(
@@ -61,27 +64,33 @@ class ValidateOutputsTest(unittest.TestCase):
                 artifacts / "train_metrics.json",
                 {
                     "selected_model_name": "bad_model",
-                    "model_candidates": [{"model_name": "bad_model", "roc_auc": 1.2, "average_precision": -0.1}],
+                    "propensity_model_candidates": [{"model_name": "bad_model", "roc_auc": 1.2, "average_precision": -0.1}],
                 },
             )
             self._write_json(
-                artifacts / "evaluation.json",
+                artifacts / "offline_policy_budget_validation.json",
                 {
                     "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 4.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0},
+                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 4.0, "targeted_users": 0, "budget_spend": 0.0},
+                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 0, "budget_spend": 0.0},
                     ]
                 },
             )
             self._write_json(
-                artifacts / "offline_policy_evaluation.json",
+                artifacts / "offline_policy_budget_test.json",
                 {
-                    "selection": {"targeted_users": 0, "budget_spend": 0.0},
-                    "kpis": {"expected_value_per_targeted_user": 0.0, "expected_value_per_dollar": 0.0},
+                    "policy_comparison": [
+                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 4.0, "targeted_users": 0, "budget_spend": 0.0},
+                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 0, "budget_spend": 0.0},
+                    ]
                 },
             )
+            self._write_json(
+                artifacts / "window_sensitivity.json",
+                {"window_sensitivity": [{"window_days": 30}, {"window_days": 60}, {"window_days": 90}]},
+            )
 
-            passed, summary = run_validation(artifacts_dir=artifacts, expect_window_sensitivity=False)
+            passed, summary = run_validation(artifacts_dir=artifacts, expect_window_sensitivity=True)
             self.assertFalse(passed)
             self.assertTrue(any(not row["passed"] for row in summary["checks"]))
 

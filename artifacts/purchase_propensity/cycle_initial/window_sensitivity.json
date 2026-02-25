@@ -1,0 +1,361 @@
+{
+  "input_csv": "artifacts/purchase_propensity/cycle_initial/_tmp/propensity_train_dataset_merged.csv",
+  "events_csv": "data/silver/transactions_line_items/transactions_line_items.csv",
+  "split_strategy": "out_of_time_10_1_1_train_dates=['2009-12-09', '2010-01-09', '2010-02-09', '2010-03-09', '2010-04-09', '2010-05-09', '2010-06-09', '2010-07-09', '2010-08-09', '2010-09-09'];validation_dates=['2010-10-09'];test_dates=['2010-11-09']",
+  "spend_cap_quantile": 0.99,
+  "calibration_method": "sigmoid",
+  "note": "offline sensitivity only; not causal promotional incrementality evidence",
+  "inter_purchase_distribution": {
+    "gap_observation_count": 27231,
+    "median_gap_days": 31,
+    "mean_gap_days": 59.013918
+  },
+  "prediction_window_validation": [
+    {
+      "window_days": 30,
+      "inter_purchase_gap_coverage": 0.493335
+    },
+    {
+      "window_days": 60,
+      "inter_purchase_gap_coverage": 0.710036
+    },
+    {
+      "window_days": 90,
+      "inter_purchase_gap_coverage": 0.807058
+    }
+  ],
+  "feature_window_validation": [
+    {
+      "feature_lookback_days": 60,
+      "prediction_window_days_for_eval": 30,
+      "feature_profile_note": "direct feature schema",
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.653316,
+          "average_precision": 0.494525,
+          "top_decile_lift": 2.073011,
+          "brier_score": 0.195824,
+          "ece_10_bin": 0.047962,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 4911.688,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_60d",
+            "monetary_30d",
+            "monetary_60d",
+            "avg_basket_value_60d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.665982,
+          "average_precision": 0.504813,
+          "top_decile_lift": 2.099588,
+          "brier_score": 0.194021,
+          "ece_10_bin": 0.054814,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 4911.688,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_60d",
+            "monetary_30d",
+            "monetary_60d",
+            "avg_basket_value_60d",
+            "country"
+          ]
+        }
+      ]
+    },
+    {
+      "feature_lookback_days": 90,
+      "prediction_window_days_for_eval": 30,
+      "feature_profile_note": "direct feature schema",
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.667655,
+          "average_precision": 0.514302,
+          "top_decile_lift": 2.143883,
+          "brier_score": 0.192646,
+          "ece_10_bin": 0.046823,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.673394,
+          "average_precision": 0.520427,
+          "top_decile_lift": 2.143883,
+          "brier_score": 0.191367,
+          "ece_10_bin": 0.048241,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        }
+      ]
+    },
+    {
+      "feature_lookback_days": 120,
+      "prediction_window_days_for_eval": 30,
+      "feature_profile_note": "direct feature schema",
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.675167,
+          "average_precision": 0.520898,
+          "top_decile_lift": 2.232474,
+          "brier_score": 0.190831,
+          "ece_10_bin": 0.044544,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 8413.526,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_120d",
+            "monetary_30d",
+            "monetary_120d",
+            "avg_basket_value_120d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.681801,
+          "average_precision": 0.529745,
+          "top_decile_lift": 2.294487,
+          "brier_score": 0.189231,
+          "ece_10_bin": 0.046986,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 8413.526,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_120d",
+            "monetary_30d",
+            "monetary_120d",
+            "avg_basket_value_120d",
+            "country"
+          ]
+        }
+      ]
+    }
+  ],
+  "window_sensitivity": [
+    {
+      "window_days": 30,
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.667655,
+          "average_precision": 0.514302,
+          "top_decile_lift": 2.143883,
+          "brier_score": 0.192646,
+          "ece_10_bin": 0.046823,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.673394,
+          "average_precision": 0.520427,
+          "top_decile_lift": 2.143883,
+          "brier_score": 0.191367,
+          "ece_10_bin": 0.048241,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.27573,
+          "positive_rate_validation": 0.301816,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        }
+      ]
+    },
+    {
+      "window_days": 60,
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.683527,
+          "average_precision": 0.67705,
+          "top_decile_lift": 1.78171,
+          "brier_score": 0.225738,
+          "ece_10_bin": 0.05898,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.438201,
+          "positive_rate_validation": 0.468216,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.69152,
+          "average_precision": 0.685446,
+          "top_decile_lift": 1.804552,
+          "brier_score": 0.22397,
+          "ece_10_bin": 0.06571,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.438201,
+          "positive_rate_validation": 0.468216,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        }
+      ]
+    },
+    {
+      "window_days": 90,
+      "best_model_by_average_precision": "xgboost",
+      "model_results": [
+        {
+          "model_name": "logistic_regression",
+          "roc_auc": 0.68705,
+          "average_precision": 0.700553,
+          "top_decile_lift": 1.737706,
+          "brier_score": 0.222746,
+          "ece_10_bin": 0.018708,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.541643,
+          "positive_rate_validation": 0.495459,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        },
+        {
+          "model_name": "xgboost",
+          "roc_auc": 0.695175,
+          "average_precision": 0.710102,
+          "top_decile_lift": 1.775482,
+          "brier_score": 0.22109,
+          "ece_10_bin": 0.035965,
+          "train_rows": 22921,
+          "validation_rows": 3744,
+          "positive_rate_train": 0.541643,
+          "positive_rate_validation": 0.495459,
+          "spend_cap_value": 6986.06,
+          "calibration_method": "sigmoid",
+          "feature_keys_used": [
+            "recency_days",
+            "frequency_30d",
+            "frequency_90d",
+            "monetary_30d",
+            "monetary_90d",
+            "avg_basket_value_90d",
+            "country"
+          ]
+        }
+      ]
+    }
+  ],
+  "freeze_decision": {
+    "selected_prediction_window_days": 90,
+    "selected_feature_lookback_days": 120,
+    "selected_propensity_model_name": "xgboost",
+    "selection_rule": "maximize_validation_average_precision",
+    "selection_summary": {
+      "prediction_window_model": "xgboost",
+      "prediction_window_average_precision": 0.710102,
+      "lookback_model": "xgboost",
+      "lookback_average_precision": 0.529745
+    }
+  }
+}

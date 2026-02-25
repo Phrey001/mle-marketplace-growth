@@ -34,3 +34,10 @@ node_modules/
 
 # Data artifacts
 data/
+
+# Purchase propensity transient run artifacts
+artifacts/purchase_propensity/_tmp/
+artifacts/purchase_propensity/*.pkl
+
+# Office temporary lock files
+docs/~$*.pptx

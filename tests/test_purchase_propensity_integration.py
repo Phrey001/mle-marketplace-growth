@@ -25,10 +25,20 @@ def _write_fixture_raw_csv(path: Path) -> None:
         user_id = f"{10000 + user_idx}.0"
         country = "United Kingdom" if user_idx % 2 == 0 else "France"
         historical_events = [
-            ("2011-05-10 10:00:00", 1, 10.0),
-            ("2011-07-10 10:00:00", 2, 12.0),
+            ("2010-12-10 10:00:00", 1, 9.0),
+            ("2011-01-10 10:00:00", 1, 9.5),
+            ("2011-02-10 10:00:00", 1, 10.0),
+            ("2011-03-10 10:00:00", 1, 10.5),
+            ("2011-04-10 10:00:00", 1, 11.0),
+            ("2011-05-10 10:00:00", 1, 11.5),
+            ("2011-06-10 10:00:00", 1, 12.0),
+            ("2011-07-10 10:00:00", 2, 12.5),
             ("2011-08-20 10:00:00", 1, 15.0),
+            ("2011-09-10 10:00:00", 1, 13.0),
+            ("2011-10-10 10:00:00", 1, 13.5),
         ]
+        if user_idx % 2 == 0:
+            historical_events.append(("2011-11-10 10:00:00", 1, 14.0))
         if user_idx % 2 == 0:
             historical_events.append(("2011-10-20 10:00:00", 1, 18.0))
         if user_idx <= 3:
@@ -122,134 +132,39 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             input_csv = tmp_root / "raw.csv"
             output_root = tmp_root / "data"
             artifacts_root = tmp_root / "artifacts"
+            config_path = tmp_root / "config.yaml"
             _write_fixture_raw_csv(input_csv)
 
             env = os.environ.copy()
             env["PYTHONPATH"] = str(repo_root / "src")
             env["OMP_NUM_THREADS"] = "1"
 
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.feature_store.build",
-                    "--input-csv",
-                    str(input_csv),
-                    "--output-root",
-                    str(output_root),
-                    "--as-of-date",
-                    "2011-11-09",
-                ],
-                env,
+            config_path.write_text(
+                "\n".join(
+                    [
+                        f"input_csv: \"{input_csv}\"",
+                        f"output_root: \"{output_root}\"",
+                        f"artifacts_dir: \"{artifacts_root}\"",
+                        "train_start_date: \"2010-12-10\"",
+                        "train_end_date: \"2011-11-10\"",
+                        "train_frequency: \"monthly\"",
+                        "score_as_of_date: \"2011-11-10\"",
+                        "prediction_window_days: 30",
+                        "feature_lookback_days: 90",
+                        "budget: 500",
+                        "cost_per_user: 5",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
             )
             self._run(
                 [
                     ".venv/bin/python",
                     "-m",
-                    "mle_marketplace_growth.purchase_propensity.train",
-                    "--input-csv",
-                    str(
-                        output_root
-                        / "gold"
-                        / "feature_store"
-                        / "purchase_propensity"
-                        / "propensity_train_dataset"
-                        / "as_of_date=2011-11-09"
-                        / "propensity_train_dataset.csv"
-                    ),
-                    "--output-dir",
-                    str(artifacts_root),
-                ],
-                env,
-            )
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.purchase_propensity.predict",
-                    "--input-csv",
-                    str(
-                        output_root
-                        / "gold"
-                        / "feature_store"
-                        / "purchase_propensity"
-                        / "user_features_asof"
-                        / "as_of_date=2011-11-09"
-                        / "user_features_asof.csv"
-                    ),
-                    "--model-path",
-                    str(artifacts_root / "propensity_model.pkl"),
-                    "--output-csv",
-                    str(artifacts_root / "prediction_scores.csv"),
-                ],
-                env,
-            )
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.purchase_propensity.evaluate",
-                    "--scores-csv",
-                    str(artifacts_root / "validation_predictions.csv"),
-                    "--output-json",
-                    str(artifacts_root / "evaluation.json"),
-                    "--output-plot",
-                    str(artifacts_root / "evaluation_policy_comparison.png"),
-                ],
-                env,
-            )
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.purchase_propensity.offline_policy_evaluation",
-                    "--scores-csv",
-                    str(artifacts_root / "prediction_scores.csv"),
-                    "--output-json",
-                    str(artifacts_root / "offline_policy_evaluation.json"),
-                    "--output-plot",
-                    str(artifacts_root / "offline_policy_evaluation_budget_curve.png"),
-                    "--budget",
-                    "500",
-                    "--cost-per-user",
-                    "5",
-                ],
-                env,
-            )
-
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.feature_store.build",
-                    "--input-csv",
-                    str(input_csv),
-                    "--output-root",
-                    str(output_root),
-                    "--as-of-date",
-                    "2011-09-09",
-                ],
-                env,
-            )
-            self._run(
-                [
-                    ".venv/bin/python",
-                    "-m",
-                    "mle_marketplace_growth.purchase_propensity.window_sensitivity",
-                    "--input-csv",
-                    str(
-                        output_root
-                        / "gold"
-                        / "feature_store"
-                        / "purchase_propensity"
-                        / "propensity_train_dataset"
-                        / "as_of_date=2011-09-09"
-                        / "propensity_train_dataset.csv"
-                    ),
-                    "--events-csv",
-                    str(output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"),
-                    "--output-json",
-                    str(artifacts_root / "window_sensitivity.json"),
+                    "mle_marketplace_growth.purchase_propensity.run_pipeline",
+                    "--config",
+                    str(config_path),
                 ],
                 env,
             )
@@ -259,14 +174,12 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             self.assertEqual(train_metrics["calibration_method"], "sigmoid")
             self.assertGreater(train_metrics["spend_cap_value"], 0)
             self.assertGreater(train_metrics["validation_quality"]["top_decile_lift"], 0)
-            self.assertGreater(train_metrics["offline_policy_backtest"]["policies"][0]["targeted_users"], 0)
-
-            evaluation = json.loads((artifacts_root / "evaluation.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(evaluation["policy_comparison"]), 3)
-
-            offline_eval = json.loads((artifacts_root / "offline_policy_evaluation.json").read_text(encoding="utf-8"))
-            self.assertGreater(offline_eval["selection"]["targeted_users"], 0)
-            self.assertGreater(offline_eval["kpis"]["expected_value_per_dollar"], 0)
+            self.assertGreater(train_metrics["test_quality"]["top_decile_lift"], 0)
+            self.assertGreater(train_metrics["test_rows"], 0)
+            budget_eval_validation = json.loads((artifacts_root / "offline_policy_budget_validation.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(budget_eval_validation["policy_comparison"]), 3)
+            budget_eval_test = json.loads((artifacts_root / "offline_policy_budget_test.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(budget_eval_test["policy_comparison"]), 3)
 
             sensitivity = json.loads((artifacts_root / "window_sensitivity.json").read_text(encoding="utf-8"))
             self.assertEqual([row["window_days"] for row in sensitivity["window_sensitivity"]], [30, 60, 90])

@@ -34,6 +34,9 @@ def main() -> None:
     revenue_fallback_value = float(model_bundle.get("revenue_fallback_value", 0.0))
     feature_columns = model_bundle["feature_columns"]
     spend_cap_value = float(model_bundle.get("spend_cap_value", float("inf")))
+    feature_lookback_days = int(model_bundle.get("feature_lookback_days", 90))
+    prediction_window_days = int(model_bundle.get("prediction_window_days", 30))
+    spend_feature = f"monetary_{feature_lookback_days}d"
 
     with input_path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
@@ -49,7 +52,7 @@ def main() -> None:
                 features[feature] = row[feature]
             else:
                 features[feature] = float(row[feature])
-        features["monetary_90d"] = min(features["monetary_90d"], spend_cap_value)
+        features[spend_feature] = min(float(features[spend_feature]), spend_cap_value)
         feature_rows.append(features)
 
     matrix = vectorizer.transform(feature_rows)
@@ -67,7 +70,15 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["user_id", "as_of_date", "propensity_score", "predicted_conditional_revenue_30d", "expected_value_score"])
+        writer.writerow(
+            [
+                "user_id",
+                "as_of_date",
+                "propensity_score",
+                f"predicted_conditional_revenue_{prediction_window_days}d",
+                "expected_value_score",
+            ]
+        )
         for row, propensity, conditional_revenue, expected_value in zip(rows, propensity_scores, conditional_revenue_scores, expected_value_scores, strict=True):
             writer.writerow(
                 [

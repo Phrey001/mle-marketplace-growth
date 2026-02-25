@@ -45,43 +45,42 @@ Business-friendly rationale:
 - Spend capping stabilizes feature inputs so extreme spend histories do not over-distort propensity/revenue model fit.
 - Calibration improves trust in score meaning during planning (for example, “0.7 score” aligns better with observed purchase likelihood).
 
-Validation modes:
+Split mode used by `run_pipeline.py`:
 
 | Mode | Meaning | Recommended use |
 |---|---|---|
-| `hash` | Deterministic user/date split | Lightweight debugging and sanity checks |
-| `out_of_time` | Hold out latest `as_of_date` buckets (requires multiple snapshots) | Preferred for production-like model validation |
+| `out_of_time_10_1_1` (implicit) | Requires exactly 12 snapshots and splits into 10 train, 1 validation, 1 test month | Strict architecture-aligned demo cycle |
 
-Out-of-time slice selection (current behavior):
+Out-of-time slice selection:
 - Snapshot panel is monthly (`train_frequency=monthly`).
 - Train snapshots come from `train_as_of_dates` or generated `train_start_date..train_end_date`.
-- `train.py` sorts unique `as_of_date` values and holds out the latest fraction by `validation_rate`.
-- Holdout slice count formula: `max(1, round(num_snapshots * validation_rate))`.
-- Validation = latest monthly slices; training = earlier slices.
+- `out_of_time_10_1_1`: strict split = first 10 monthly slices train, 11th slice validation, 12th slice test.
 
 Training outputs:
 
 | Artifact | Purpose |
 |---|---|
 | `artifacts/purchase_propensity/propensity_model.pkl` | Trained model bundle |
-| `artifacts/purchase_propensity/train_metrics.json` | Model metrics + policy comparison + out-of-time quality KPIs |
-| `artifacts/purchase_propensity/validation_predictions.csv` | Holdout predictions and policy flags |
+| `artifacts/purchase_propensity/train_metrics.json` | Model metrics + out-of-time quality KPIs |
+| `artifacts/purchase_propensity/validation_predictions.csv` | Validation-slice predictions with ML/random/RFM policy scores |
+| `artifacts/purchase_propensity/test_predictions.csv` | Test-slice predictions with ML/random/RFM policy scores |
 
 Out-of-time quality KPIs captured in `train_metrics.json`:
 - ROC-AUC
 - PR-AUC (`average_precision`)
 - Top-decile lift
 - Calibration metrics (Brier score, ECE with 10 bins)
+- Revenue-model holdout quality (on buyers only): RMSE, MAE, MAPE
 
-### 3) Offline Policy Backtest
+### 3) Offline Policy Backtest (Budget-Constrained Holdout)
 
-Policies compared on validation holdout:
+Budget-constrained policy backtest compares policies on holdout slices (validation/test) with equal `Top-K` count derived from `budget / cost_per_user`:
 
 | Policy | Selection rule |
 |---|---|
-| `ml_top_expected_value` | Top 20% by expected value |
-| `random_baseline` | Deterministic random 20% |
-| `rfm_heuristic` | Top 20% by heuristic RFM score |
+| `ml_top_expected_value` | Top-K by expected value |
+| `random_baseline` | Top-K by deterministic random score |
+| `rfm_heuristic` | Top-K by heuristic RFM score |
 
 Backtest metrics:
 
@@ -93,9 +92,8 @@ Evaluation artifacts:
 
 | Artifact | Purpose |
 |---|---|
-| `artifacts/purchase_propensity/evaluation.json` | Holdout policy metrics |
-| `artifacts/purchase_propensity/evaluation_policy_comparison.png` | Policy comparison visualization |
-| `artifacts/purchase_propensity/evaluation_model_diagnostics.png` | Model diagnostics (ROC, PR, calibration, lift) |
+| `artifacts/purchase_propensity/offline_policy_budget_validation.json` | Budget-constrained policy metrics on validation slice |
+| `artifacts/purchase_propensity/offline_policy_budget_test.json` | Budget-constrained policy metrics on test slice |
 | `artifacts/purchase_propensity/output_validation_summary.json` | Automated output sanity-check summary |
 | `artifacts/purchase_propensity/output_interpretation.md` | Automated interpretation summary |
 
@@ -103,12 +101,33 @@ Evaluation artifacts:
 
 | Item | Design |
 |---|---|
-| Script | `src/mle_marketplace_growth/purchase_propensity/offline_policy_evaluation.py` |
-| Input | `artifacts/purchase_propensity/prediction_scores.csv` |
-| Allocation rule | Target highest `expected_value_score` until budget is exhausted |
-| Outputs | `offline_policy_evaluation.json` (includes expected value per targeted user and per dollar), `offline_policy_evaluation_budget_curve.png` |
+| Script | `src/mle_marketplace_growth/purchase_propensity/policy_budget_evaluation.py` |
+| Input | `validation_predictions.csv` / `test_predictions.csv` |
+| Allocation rule | Equal `Top-K` by budget per policy (`K = floor(budget / cost_per_user)`) |
+| Outputs | `offline_policy_budget_validation.json`, `offline_policy_budget_test.json` |
+
+Budget-constrained policy comparison on holdout slices (validation/test) is also produced with equal budget-based target count (`Top-K by budget`) for:
+- `ml_top_expected_value`
+- `random_baseline`
+- `rfm_heuristic`
 
 Executable commands are documented in `docs/quickstart.md`.
+
+### 5) Serving Snapshot Scoring (Operational Output)
+
+| Item | Design |
+|---|---|
+| Script | `src/mle_marketplace_growth/purchase_propensity/predict.py` |
+| Input | `user_features_asof.csv` + `propensity_model.pkl` |
+| Output | `artifacts/purchase_propensity/prediction_scores.csv` |
+| Purpose | Operational ranked list for user-level targeting handoff (not a holdout evaluation artifact) |
+
+## Split Semantics (Train / Val / Test in this repo)
+
+- `train.py` uses train rows to fit candidate models.
+- Candidate selection is based on holdout ranking quality (`average_precision`) from out-of-time validation slices.
+- Final model/policy evaluation and interpretation artifacts are computed on the strict test slice (12th snapshot), with separate validation-slice policy backtest artifacts also emitted.
+- In the strict run-pipeline mode, split ratios are fixed (10/1/1) and do not use `validation_rate`.
 
 ## Window Choice Note (30 days)
 
@@ -119,9 +138,11 @@ Cadence and window alignment in current pipeline:
 - Generated snapshot panels use monthly cadence (`train_frequency=monthly`).
 - `prediction_window_days` and `feature_lookback_days` are separate config knobs.
 - Allowed sets are explicit: `prediction_window_days` `{30,60,90}` and `feature_lookback_days` `{60,90,120}`.
-- Training panel period is config-driven (`train_start_date`, `train_end_date` in `configs/purchase_propensity/default_out_of_time.yaml`).
-- Validation split fraction is config-driven (`validation_rate` in `configs/purchase_propensity/default_out_of_time.yaml`).
-- Main pipeline execution is still wired to 30-day labels and 90-day feature lookback in `run_pipeline.py`; this is an intentional guardrail while sensitivity evidence is being consolidated.
+- Training panel period is config-driven (`train_start_date`, `train_end_date` in cycle YAML configs).
+- Strict split is fixed to 10 train months + 1 validation month + 1 test month per cycle.
+- `run_pipeline.py` supports `window_selection_mode`:
+  - `sensitivity`: run `window_sensitivity.py` and freeze by validation PR-AUC.
+  - `fixed`: use config-provided structural choices directly (no reopen of structural search).
 
 `window_sensitivity.py` runs model metrics for 30/60/90 prediction windows and 60/90/120 lookback profiles, and writes:
 
@@ -150,7 +171,21 @@ Interpretation guideline:
 - Use ROC-AUC / Top-decile lift as ranking sanity checks.
 - Use Brier / ECE to watch calibration-quality tradeoffs.
 
-Important: run sensitivity with an earlier `as_of_date` (for example `2011-09-09`). If `as_of_date` is close to the dataset end, longer windows (60/90) are right-censored and may collapse to the same outcomes as 30 days.
+Sensitivity runs on the merged strict 12-snapshot panel and follows the same chronological 10/1/1 split semantics (train/validation/test dates).
+
+`train.py` model validation now includes both:
+- propensity candidate validation (logistic regression vs xgboost on validation PR-AUC/ROC-AUC)
+- revenue candidate validation (xgboost regressor vs constant baseline on validation RMSE/MAE/MAPE over buyer rows)
+
+Policy backtest outputs are produced for both validation and test slices:
+- `offline_policy_budget_validation.json`
+- `offline_policy_budget_test.json`
+
+## Retraining Cadence
+
+- Current repo orchestration is snapshot-driven and manual/CLI-triggered.
+- Demo run pattern: initial 12-month cycle + one rolling retrain cycle, both with strict 10/1/1 chronology.
+- Recommended practice in this repo: freeze structural decisions on the initial cycle (`window_selection_mode=sensitivity`), then keep retrain cycle fixed (`window_selection_mode=fixed`).
 
 ## Testing
 

@@ -27,6 +27,14 @@ The result is lower incremental revenue and inefficient budget use.
 - Modeling choices (scaling, spend capping, calibration) are documented in `docs/purchase_propensity/spec.md`.
 - Window sensitivity now evaluates materialized feature-lookback profiles (`60/90/120`) for model-design comparison; main pipeline default remains `30d` target + `90d` lookback.
 
+## Portfolio Signal Snapshot (Purchase Propensity)
+
+- End-to-end reproducible flow: feature store -> strict temporal split -> model training -> budget-constrained policy backtest -> analytical report.
+- Temporal rigor: strict monthly `10/1/1` chronology per cycle with one rolling retrain cycle for drift/readiness signal.
+- Decision discipline: structural search frozen on initial cycle, retrain kept fixed for fair comparability and lower operational complexity.
+- Business framing: ML expected-value policy benchmarked against Random and RFM under equal budget-constrained Top-K targeting.
+- Scope integrity: offline policy evidence only; no causal incrementality overclaim.
+
 ## Key Limitations
 
 - **Not included:** online A/B testing. Why: this repo is local/offline and has no live traffic.

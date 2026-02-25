@@ -3,6 +3,7 @@
 import argparse
 import calendar
 import csv
+import json
 import subprocess
 import sys
 from datetime import date
@@ -33,6 +34,10 @@ def _read_config_file(path: Path) -> dict:
 def _run(command: list[str]) -> None:
     print("Running:", " ".join(command))
     subprocess.run(command, check=True)
+
+
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ===== Path + Date Helpers =====
@@ -147,28 +152,31 @@ def main() -> None:
     )
     parser.add_argument("--score-as-of-date", default=cfg("score_as_of_date", "2011-11-09"), help="Feature snapshot date used for scoring/evaluation")
     parser.add_argument(
-        "--validation-mode",
-        choices=["hash", "out_of_time"],
-        default=cfg("validation_mode", "hash"),
-        help="Validation strategy for training",
-    )
-    parser.add_argument("--validation-rate", type=float, default=float(cfg("validation_rate", 0.2)), help="Holdout fraction used for validation split")
-    parser.add_argument(
         "--prediction-window-days",
         type=int,
         default=int(cfg("prediction_window_days", 30)),
-        help="Allowed values: 30, 60, 90 (current feature-store SQL is implemented for 30-day labels).",
+        help="Allowed values: 30, 60, 90 (strict demo execution path uses 30).",
     )
     parser.add_argument(
         "--feature-lookback-days",
         type=int,
         default=int(cfg("feature_lookback_days", 90)),
-        help="Allowed values: 60, 90, 120 (current feature-store SQL is implemented for 90-day features).",
+        help="Allowed values: 60, 90, 120 (strict demo execution path uses 90).",
     )
-    parser.add_argument("--target-rate", type=float, default=cfg("target_rate", 0.2), help="Targeting share for policy comparison")
+    parser.add_argument(
+        "--window-selection-mode",
+        choices=["sensitivity", "fixed"],
+        default=cfg("window_selection_mode", "sensitivity"),
+        help="`sensitivity`: select structural decisions from window_sensitivity output; `fixed`: use config values directly.",
+    )
+    parser.add_argument(
+        "--force-propensity-model",
+        choices=["logistic_regression", "xgboost"],
+        default=cfg("force_propensity_model", None),
+        help="Only used when --window-selection-mode=fixed.",
+    )
     parser.add_argument("--budget", type=float, default=cfg("budget", 5000.0), help="Budget for offline policy evaluation")
     parser.add_argument("--cost-per-user", type=float, default=cfg("cost_per_user", 5.0), help="Cost per targeted user for offline policy evaluation")
-    parser.add_argument("--sensitivity-as-of-date", default=cfg("sensitivity_as_of_date", "2011-09-09"), help="Feature snapshot date used for window sensitivity")
     args = parser.parse_args(remaining_argv)
 
     # ===== Validate Inputs =====
@@ -191,30 +199,17 @@ def main() -> None:
 
     if not train_as_of_dates:
         raise ValueError("--train-as-of-dates must include at least one date")
-    if args.validation_mode == "out_of_time" and len(train_as_of_dates) < 2:
-        raise ValueError("--validation-mode out_of_time requires at least 2 --train-as-of-dates")
-    if not 0.0 < args.validation_rate < 1.0:
-        raise ValueError("--validation-rate must be between 0 and 1")
+    if len(train_as_of_dates) != 12:
+        raise ValueError("Strict architecture split requires exactly 12 --train-as-of-dates (10 train / 1 val / 1 test)")
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS:
         raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS:
         raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
-    if args.prediction_window_days != 30:
-        raise ValueError(
-            "Current feature-store SQL/materialization is implemented for 30-day labels only. "
-            "60/90-day windows are reserved but not wired into the main pipeline yet."
-        )
-    if args.feature_lookback_days != 90:
-        raise ValueError(
-            "Current feature-store SQL/materialization is implemented for 90-day feature lookback only. "
-            "Other lookback windows are reserved but not wired into the main pipeline yet."
-        )
     print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
 
     # ===== Build Feature-Store Snapshots =====
     snapshots_to_build = set(train_as_of_dates)
     snapshots_to_build.add(args.score_as_of_date)
-    snapshots_to_build.add(args.sensitivity_as_of_date)
     for as_of_date in sorted(snapshots_to_build):
         _build_snapshot(input_csv, output_root, as_of_date)
 
@@ -226,24 +221,64 @@ def main() -> None:
         train_input_csv = artifacts_dir / "_tmp" / "propensity_train_dataset_merged.csv"
         _merge_train_datasets(train_paths, train_input_csv)
 
+    # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
+    expect_window_sensitivity = args.window_selection_mode == "sensitivity"
+    if expect_window_sensitivity:
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "mle_marketplace_growth.purchase_propensity.window_sensitivity",
+                "--input-csv",
+                str(train_input_csv),
+                "--events-csv",
+                str(output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"),
+                "--output-json",
+                str(artifacts_dir / "window_sensitivity.json"),
+                "--output-plot",
+                str(artifacts_dir / "window_validation_dashboard.png"),
+            ]
+        )
+        window_sensitivity_path = artifacts_dir / "window_sensitivity.json"
+        window_sensitivity_output = _load_json(window_sensitivity_path) if window_sensitivity_path.exists() else {}
+        freeze_decision = window_sensitivity_output.get("freeze_decision", {})
+        frozen_prediction_window_days = int(freeze_decision.get("selected_prediction_window_days", args.prediction_window_days))
+        frozen_feature_lookback_days = int(freeze_decision.get("selected_feature_lookback_days", args.feature_lookback_days))
+        frozen_propensity_model = freeze_decision.get("selected_propensity_model_name")
+        print(
+            "Frozen decision from sensitivity:",
+            f"prediction_window={frozen_prediction_window_days}d,",
+            f"feature_lookback={frozen_feature_lookback_days}d,",
+            f"propensity_model={frozen_propensity_model}",
+        )
+    else:
+        frozen_prediction_window_days = int(args.prediction_window_days)
+        frozen_feature_lookback_days = int(args.feature_lookback_days)
+        frozen_propensity_model = args.force_propensity_model
+        print(
+            "Frozen decision from fixed config:",
+            f"prediction_window={frozen_prediction_window_days}d,",
+            f"feature_lookback={frozen_feature_lookback_days}d,",
+            f"propensity_model={frozen_propensity_model}",
+        )
+
     # ===== Train + Predict + Evaluate =====
-    _run(
-        [
-            sys.executable,
-            "-m",
-            "mle_marketplace_growth.purchase_propensity.train",
-            "--input-csv",
-            str(train_input_csv),
-            "--output-dir",
-            str(artifacts_dir),
-            "--validation-mode",
-            args.validation_mode,
-            "--validation-rate",
-            str(args.validation_rate),
-            "--target-rate",
-            str(args.target_rate),
-        ]
-    )
+    train_command = [
+        sys.executable,
+        "-m",
+        "mle_marketplace_growth.purchase_propensity.train",
+        "--input-csv",
+        str(train_input_csv),
+        "--output-dir",
+        str(artifacts_dir),
+        "--prediction-window-days",
+        str(frozen_prediction_window_days),
+        "--feature-lookback-days",
+        str(frozen_feature_lookback_days),
+    ]
+    if frozen_propensity_model:
+        train_command.extend(["--force-propensity-model", str(frozen_propensity_model)])
+    _run(train_command)
 
     user_features_path = (
         output_root
@@ -257,11 +292,9 @@ def main() -> None:
     model_path = artifacts_dir / "propensity_model.pkl"
     prediction_scores_path = artifacts_dir / "prediction_scores.csv"
     validation_predictions_path = artifacts_dir / "validation_predictions.csv"
-    evaluation_json_path = artifacts_dir / "evaluation.json"
-    evaluation_plot_path = artifacts_dir / "evaluation_policy_comparison.png"
-    evaluation_diag_path = artifacts_dir / "evaluation_model_diagnostics.png"
-    offline_eval_json_path = artifacts_dir / "offline_policy_evaluation.json"
-    offline_eval_plot_path = artifacts_dir / "offline_policy_evaluation_budget_curve.png"
+    test_predictions_path = artifacts_dir / "test_predictions.csv"
+    budget_eval_validation_json_path = artifacts_dir / "offline_policy_budget_validation.json"
+    budget_eval_test_json_path = artifacts_dir / "offline_policy_budget_test.json"
 
     _run(
         [
@@ -280,57 +313,45 @@ def main() -> None:
         [
             sys.executable,
             "-m",
-            "mle_marketplace_growth.purchase_propensity.evaluate",
+            "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
             "--scores-csv",
             str(validation_predictions_path),
             "--output-json",
-            str(evaluation_json_path),
-            "--output-plot",
-            str(evaluation_plot_path),
-            "--output-diagnostics-plot",
-            str(evaluation_diag_path),
-        ]
-    )
-    _run(
-        [
-            sys.executable,
-            "-m",
-            "mle_marketplace_growth.purchase_propensity.offline_policy_evaluation",
-            "--scores-csv",
-            str(prediction_scores_path),
-            "--output-json",
-            str(offline_eval_json_path),
-            "--output-plot",
-            str(offline_eval_plot_path),
+            str(budget_eval_validation_json_path),
             "--budget",
             str(args.budget),
             "--cost-per-user",
             str(args.cost_per_user),
+            "--purchase-label-col",
+            f"label_purchase_{frozen_prediction_window_days}d",
+            "--revenue-label-col",
+            f"label_net_revenue_{frozen_prediction_window_days}d",
         ]
     )
-
-    # ===== Sensitivity Run =====
     _run(
         [
             sys.executable,
             "-m",
-            "mle_marketplace_growth.purchase_propensity.window_sensitivity",
-            "--input-csv",
-            str(_train_dataset_path(output_root, args.sensitivity_as_of_date)),
-            "--events-csv",
-            str(output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"),
+            "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
+            "--scores-csv",
+            str(test_predictions_path),
             "--output-json",
-            str(artifacts_dir / "window_sensitivity.json"),
-            "--output-plot",
-            str(artifacts_dir / "window_validation_dashboard.png"),
+            str(budget_eval_test_json_path),
+            "--budget",
+            str(args.budget),
+            "--cost-per-user",
+            str(args.cost_per_user),
+            "--purchase-label-col",
+            f"label_purchase_{frozen_prediction_window_days}d",
+            "--revenue-label-col",
+            f"label_net_revenue_{frozen_prediction_window_days}d",
         ]
     )
-
     # ===== Validation + Interpretation =====
     summary_path = artifacts_dir / "output_validation_summary.json"
     passed, summary = run_validation(
         artifacts_dir=artifacts_dir,
-        expect_window_sensitivity=True,
+        expect_window_sensitivity=expect_window_sensitivity,
         output_json=summary_path,
     )
     if not passed:

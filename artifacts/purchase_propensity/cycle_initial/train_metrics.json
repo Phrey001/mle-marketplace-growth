@@ -1,0 +1,93 @@
+{
+  "input_csv": "artifacts/purchase_propensity/cycle_initial/_tmp/propensity_train_dataset_merged.csv",
+  "target_definition": "label_purchase_90d",
+  "revenue_backtest_label": "label_net_revenue_90d",
+  "prediction_window_days": 90,
+  "feature_lookback_days": 120,
+  "validation_split_description": "out_of_time_10_1_1_train_dates=['2009-12-09', '2010-01-09', '2010-02-09', '2010-03-09', '2010-04-09', '2010-05-09', '2010-06-09', '2010-07-09', '2010-08-09', '2010-09-09'];validation_dates=['2010-10-09'];test_dates=['2010-11-09']",
+  "spend_cap_quantile": 0.99,
+  "spend_cap_value": 8413.526,
+  "calibration_method": "sigmoid",
+  "revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "revenue_fallback_value": 1222.495345,
+  "train_rows": 22921,
+  "validation_rows": 3744,
+  "test_rows": 4111,
+  "selected_model_name": "xgboost",
+  "selected_propensity_model_name": "xgboost",
+  "selected_revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "validation_quality": {
+    "roc_auc": 0.707477,
+    "average_precision": 0.723371,
+    "top_decile_lift": 1.802465,
+    "top_decile_positive_rate": 0.893048,
+    "base_positive_rate": 0.495459,
+    "brier_score": 0.217854,
+    "ece_10_bin": 0.035603
+  },
+  "test_quality": {
+    "roc_auc": 0.728442,
+    "average_precision": 0.689713,
+    "top_decile_lift": 2.14083,
+    "top_decile_positive_rate": 0.875912,
+    "base_positive_rate": 0.409146,
+    "brier_score": 0.215744,
+    "ece_10_bin": 0.114872
+  },
+  "revenue_validation_quality": {
+    "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+    "row_count": 1855,
+    "rmse": 2383.351261,
+    "mae": 717.361837,
+    "mape": 1.303019,
+    "mape_note": "MAPE excludes rows with zero actual revenue.",
+    "status": "ok"
+  },
+  "revenue_test_quality": {
+    "evaluation_population": "test_rows_with_label_purchase_90d_equals_1",
+    "row_count": 1682,
+    "rmse": 2783.502817,
+    "mae": 746.159204,
+    "mape": 1.548061,
+    "mape_note": "MAPE excludes rows with zero actual revenue."
+  },
+  "propensity_model_candidates": [
+    {
+      "model_name": "logistic_regression",
+      "roc_auc": 0.697187,
+      "average_precision": 0.712097
+    },
+    {
+      "model_name": "xgboost",
+      "roc_auc": 0.707477,
+      "average_precision": 0.723371
+    }
+  ],
+  "revenue_model_candidates": [
+    {
+      "model_name": "xgboost_regressor_conditional_revenue",
+      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+      "row_count": 1855,
+      "rmse": 2383.351261,
+      "mae": 717.361837,
+      "mape": 1.303019,
+      "mape_note": "MAPE excludes rows with zero actual revenue.",
+      "status": "ok"
+    },
+    {
+      "model_name": "constant_mean_positive_revenue",
+      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+      "row_count": 1855,
+      "rmse": 3334.135057,
+      "mae": 1143.130244,
+      "mape": 2.8638,
+      "mape_note": "MAPE excludes rows with zero actual revenue.",
+      "status": "ok"
+    }
+  ],
+  "model_validation": {
+    "selected_propensity_model_name": "xgboost",
+    "selected_revenue_model_name": "xgboost_regressor_conditional_revenue"
+  },
+  "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality"
+}

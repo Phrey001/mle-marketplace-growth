@@ -1,0 +1,9 @@
+train_start_date: "2009-12-09" # first-year baseline cycle start (monthly snapshots)
+train_end_date: "2010-11-09" # first-year baseline cycle end (12 snapshots total)
+train_frequency: "monthly" # snapshot cadence (monthly only)
+score_as_of_date: "2010-11-09" # cycle score/evaluation snapshot
+window_selection_mode: "sensitivity" # run structural search and freeze on initial cycle
+prediction_window_days: 30 # fallback only if sensitivity freeze decision is unavailable
+feature_lookback_days: 90 # fallback only if sensitivity freeze decision is unavailable
+budget: 5000.0 # budget used in offline policy allocation
+cost_per_user: 5.0 # assumed unit incentive cost per targeted user
