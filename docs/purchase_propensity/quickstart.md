@@ -1,6 +1,7 @@
 # Purchase Propensity Quickstart
 
 Environment setup is shared at repository root `README.md`.
+Datetime/global-vs-engine config strategy is documented in `docs/README.md`.
 
 ## Recommended Steps
 
@@ -18,17 +19,24 @@ It writes:
 Two-cycle demo flow (manual, config-driven):
 
 ```bash
+# Shared layer (run once; reuse across engines/cycles)
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build --shared-config configs/shared.yaml --build-engines shared
+
 # Cycle 1: initial batch (first-year panel)
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/demo_cycle_initial.yaml --artifacts-dir artifacts/purchase_propensity/cycle_initial
 
 # Cycle 2: single rolling retrain
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/demo_cycle_retrain.yaml --artifacts-dir artifacts/purchase_propensity/cycle_retrain
+
+# Regenerate policy comparison chart used in analysis report
+PYTHONPATH=src python scripts/report_policy_comparison_chart.py
 ```
 
 Notes:
 - Initial cycle uses `window_selection_mode=sensitivity` to freeze structural decisions.
 - Retrain cycle uses `window_selection_mode=fixed` to avoid reopening structural search.
-- Temporal schedule details: `docs/purchase_propensity/snapshot_plan.md`.
+- engine-specific gold build requires prebuilt shared silver; run `--build-engines shared` first.
+- cycle dates are validated against available shared silver event-date bounds during feature-store build.
 - Design details: `docs/purchase_propensity/spec.md`.
 
 Optional clean rebuild:
@@ -51,12 +59,6 @@ rm -rf data/gold/feature_store/purchase_propensity/*
   - initial cycle only: `window_sensitivity.json`, `window_validation_dashboard.png`
 
 ## Optional Checks
-
-Optional report chart regeneration:
-
-```bash
-PYTHONPATH=src python scripts/report_policy_comparison_chart.py
-```
 
 Unit tests:
 

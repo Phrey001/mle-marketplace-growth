@@ -85,15 +85,16 @@ def main() -> None:
         user_idx = user_to_idx[user_id]
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
-        candidate_indices = [idx for idx in range(item_count) if item_ids[idx] not in seen]
-        if not candidate_indices: continue
 
         if selected == "popularity":
+            candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
+            if not candidate_indices: continue
             scores = popularity[candidate_indices]
             top_local = _top_k_indices(np.asarray(scores), min(args.top_k, len(candidate_indices)))
             ranked_item_indices = [candidate_indices[idx] for idx in top_local]
             ranked_scores = [float(scores[idx]) for idx in top_local]
         else:
+            if len(seen_indices) >= item_count: continue
             if selected == "mf": user_vector = mf_user[user_idx].reshape(1, -1)
             elif selected == "two_tower": user_vector = tt_user[user_idx].reshape(1, -1)
             else: raise ValueError(f"ANN retrieval is not supported for model: {selected}")

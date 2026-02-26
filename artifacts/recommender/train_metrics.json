@@ -14,12 +14,26 @@
     "test_users": 4298
   },
   "model_config": {
-    "embedding_dim": 32,
-    "epochs": 3,
-    "learning_rate": 0.05,
-    "negative_samples": 3,
+    "embedding_dim": 64,
+    "epochs": 12,
+    "learning_rate": 0.003,
+    "negative_samples": 8,
+    "batch_size": 4096,
     "l2_reg": 0.0001,
-    "mf_components": 32,
+    "max_grad_norm": 1.0,
+    "early_stop_rounds": 4,
+    "early_stop_metric": "val_recall_at_k",
+    "early_stop_k": 20,
+    "early_stop_tolerance": 0.0001,
+    "temperature": 0.7,
+    "normalize_embeddings": true,
+    "device": "auto",
+    "mf_components": 64,
+    "mf_n_iter": 15,
+    "mf_weighting": "tfidf",
+    "mf_algorithm": "randomized",
+    "mf_tol": 0.0,
+    "popularity_transform": "log1p",
     "ann_backend": "faiss_hnsw_ip"
   }
 }

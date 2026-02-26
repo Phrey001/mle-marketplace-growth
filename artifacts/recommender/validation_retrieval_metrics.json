@@ -16,24 +16,24 @@
       "model_name": "mf",
       "eligible_users": 4168,
       "metrics": {
-        "Recall@10": 0.090211,
-        "NDCG@10": 0.046565,
-        "HitRate@10": 0.090211,
-        "Recall@20": 0.126679,
-        "NDCG@20": 0.055817,
-        "HitRate@20": 0.126679
+        "Recall@10": 0.083013,
+        "NDCG@10": 0.044036,
+        "HitRate@10": 0.083013,
+        "Recall@20": 0.125,
+        "NDCG@20": 0.054625,
+        "HitRate@20": 0.125
       }
     },
     {
       "model_name": "two_tower",
       "eligible_users": 4168,
       "metrics": {
-        "Recall@10": 0.025192,
-        "NDCG@10": 0.010949,
-        "HitRate@10": 0.025192,
-        "Recall@20": 0.038388,
-        "NDCG@20": 0.014286,
-        "HitRate@20": 0.038388
+        "Recall@10": 0.069098,
+        "NDCG@10": 0.035616,
+        "HitRate@10": 0.069098,
+        "Recall@20": 0.097409,
+        "NDCG@20": 0.042708,
+        "HitRate@20": 0.097409
       }
     }
   ],

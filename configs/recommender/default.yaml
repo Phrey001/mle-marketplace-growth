@@ -1,8 +1,38 @@
-input_csv: "data/bronze/online_retail_ii/raw.csv" # source transaction file
-output_root: "data" # feature-store materialization root
-artifacts_dir: "artifacts/recommender" # recommender artifact output folder
-split_version: "time_rank_v1" # split strategy ID; each ID maps to a specific train/val/test split rule
-recommender_min_event_date: "2010-12-01" # fixed lower bound for reproducible demo window
-recommender_max_event_date: "2011-11-30" # fixed upper bound for reproducible demo window
-top_k: 20 # serving output candidates per user
-top_ks: "10,20" # evaluation metric cutoffs (compute Recall/NDCG/HitRate at K=10 and K=20)
+# Paths + split window (applies to full recommender pipeline)
+# Tuning note: artifacts/recommender/tuning/tuning_summary.json selected trial_default (no better trial found in fixed small grid).
+artifacts_dir: "artifacts/recommender" # output folder for all recommender artifacts
+split_version: "time_rank_v1" # split strategy label written into feature-store split table
+recommender_min_event_date: "2010-12-01" # lower bound for interaction events used by all models
+recommender_max_event_date: "2011-11-30" # upper bound for interaction events used by all models
+
+# Two-tower model params (PyTorch retrieval model only)
+embedding_dim: 64 # recommended: quick high-ROI quality lift vs 32 on this dataset
+epochs: 12 # recommended: stronger optimization budget; rely on early stopping to cap runtime
+learning_rate: 0.003 # recommended: stable AdamW training; higher rates showed noisier/increasing loss
+negative_samples: 8 # recommended: stronger negative contrast signal for retrieval ranking
+batch_size: 4096 # recommended: batched training throughput without excessive memory in typical local runs
+l2_reg: 0.0001 # recommended: light regularization to reduce overfit without underfitting
+max_grad_norm: 1.0 # recommended: standard clipping level to control exploding gradients (0 disables clipping)
+early_stop_rounds: 4 # recommended: allow modest extra optimization before early stop
+early_stop_metric: "val_recall_at_k" # recommended: stop on validation Recall@K plateau (use "loss" only for debugging)
+early_stop_k: 20 # recommended: same K as primary offline retrieval metric for consistent convergence signal
+early_stop_tolerance: 0.0001 # recommended: minimum Recall/Loss improvement threshold to count as progress
+temperature: 0.7 # recommended: sharper contrastive softmax for stronger retrieval ranking signal
+normalize_embeddings: 1 # recommended: cosine-style scoring stability (1=yes, 0=no)
+tower_hidden_dim: 0 # recommended default: embedding-only towers; set >0 to enable MLP towers experimentally
+tower_dropout: 0.0 # applies only when tower_hidden_dim > 0
+device: "auto" # auto-selects cuda when available, else falls back to cpu
+
+# MF baseline params (TruncatedSVD baseline only)
+mf_components: 64 # recommended: stronger baseline than 32 while still fast
+mf_n_iter: 15 # recommended: enough for stable SVD fit in demo-scale data
+mf_weighting: "tfidf" # recommended: downweights head items; usually improves retrieval ranking vs binary counts
+mf_algorithm: "randomized" # recommended: fastest solver for this workflow; arpack only when tolerance control is required
+mf_tol: 0.0 # recommended with randomized; set >0 only when using arpack tolerance-based convergence
+
+# Popularity baseline params (popularity baseline only)
+popularity_transform: "log1p" # recommended: reduces head-item dominance for fairer baseline ranking
+
+# Evaluation + serving params (applies after model training)
+top_k: 20 # recommended serving depth for candidate retrieval in this demo
+top_ks: "10,20" # recommended evaluation cutoffs: near-shelf (10) and deeper candidate set (20)

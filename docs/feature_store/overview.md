@@ -24,7 +24,6 @@ Optional build arguments:
 | Argument | Default | Purpose |
 | --- | --- | --- |
 | `--as-of-date YYYY-MM-DD` | auto (max source event date) | Fixes point-in-time snapshot date for propensity datasets (`gold_labels`, `gold_user_features_asof`, `gold_propensity_train_dataset`). |
-| `--purchase-propensity-as-of-date YYYY-MM-DD` | `--as-of-date` value (or auto max) | Explicit propensity-only snapshot date (preferred over the generic `--as-of-date` name). |
 | `--build-engines purchase_propensity,recommender` | `purchase_propensity,recommender` | Builds only selected engine outputs so time settings can be decoupled by engine. |
 | `--recommender-min-event-date YYYY-MM-DD` | unset | Optional lower bound event_date filter for recommender outputs. |
 | `--recommender-max-event-date YYYY-MM-DD` | unset | Optional upper bound event_date filter for recommender outputs. |

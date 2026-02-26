@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
+import yaml
 
 
 REQUIRED_SOURCE_COLUMNS = {
@@ -49,31 +50,53 @@ def _run_dq_check(connection: duckdb.DuckDBPyConnection, sql: str, error_message
     failing_rows = int(connection.execute(sql).fetchone()[0] or 0)
     if failing_rows > 0: raise ValueError(error_message)
 
+def _load_yaml_defaults(path_value: str | None, label: str) -> dict:
+    if not path_value:
+        return {}
+    config_path = Path(path_value)
+    if not config_path.exists():
+        raise FileNotFoundError(f"{label} file not found: {config_path}")
+    if config_path.suffix.lower() not in {".yaml", ".yml"}:
+        raise ValueError(f"{label} file must use .yaml or .yml")
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} file must contain a key-value object")
+    return payload
+
 
 # ===== Entry Point =====
 def main() -> None:
     """Run the feature-store build pipeline."""
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--shared-config", default=None, help="Optional shared YAML config file")
+    pre_args, remaining_argv = pre_parser.parse_known_args()
+    shared_defaults = _load_yaml_defaults(pre_args.shared_config, "Shared config")
+    cfg = shared_defaults.get
+
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Build local feature-store tables with DuckDB SQL.")
-    parser.add_argument("--input-csv", default="data/bronze/online_retail_ii/raw.csv", help="Path to raw Online Retail II CSV")
-    parser.add_argument("--output-root", default="data", help="Output root path for silver/gold materializations")
+    parser.add_argument("--shared-config", default=pre_args.shared_config, help="Optional shared YAML config file")
+    parser.add_argument("--input-csv", default=cfg("input_csv", "data/bronze/online_retail_ii/raw.csv"), help="Path to raw Online Retail II CSV")
+    parser.add_argument("--output-root", default=cfg("output_root", "data"), help="Output root path for silver/gold materializations")
     parser.add_argument("--as-of-date", default=None, help="As-of date for feature snapshots in YYYY-MM-DD (default: max event date in source)")
-    parser.add_argument("--purchase-propensity-as-of-date", default=None, help="As-of date for purchase propensity snapshots in YYYY-MM-DD (overrides --as-of-date)")
-    parser.add_argument("--build-engines", default="purchase_propensity,recommender", help="Comma-separated engines to build: purchase_propensity,recommender")
+    parser.add_argument("--build-engines", default="purchase_propensity,recommender", help="Comma-separated engines to build: shared,purchase_propensity,recommender")
     parser.add_argument("--recommender-min-event-date", default=None, help="Optional lower bound event_date filter for recommender datasets in YYYY-MM-DD")
     parser.add_argument("--recommender-max-event-date", default=None, help="Optional upper bound event_date filter for recommender datasets in YYYY-MM-DD")
     parser.add_argument("--bad-ts-threshold", type=float, default=0.01, help="Maximum tolerated ratio of rows with unparsable InvoiceDate before failing")
     parser.add_argument("--split-version", default="time_rank_v1", help="Identifier for the split strategy/version written into split artifacts")
     args = parser.parse_args()
 
-    input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
-    if not input_csv.exists(): raise FileNotFoundError(f"Input CSV not found: {input_csv}")
     build_engines = {value.strip() for value in args.build_engines.split(",") if value.strip()}
-    supported_engines = {"purchase_propensity", "recommender"}
+    supported_engines = {"purchase_propensity", "recommender", "shared"}
     unknown_engines = sorted(build_engines - supported_engines)
     if unknown_engines: raise ValueError(f"Unsupported engine(s) in --build-engines: {unknown_engines}")
     if not build_engines: raise ValueError("--build-engines must include at least one supported engine")
+    if "shared" in build_engines and len(build_engines) > 1:
+        raise ValueError("--build-engines=shared must be run as a standalone shared-layer build command")
+    build_shared = build_engines == {"shared"}
+    input_csv = Path(args.input_csv)
+    if build_shared and not input_csv.exists(): raise FileNotFoundError(f"Input CSV not found: {input_csv}")
 
     # ===== Load SQL Assets =====
     sql_dir = Path(__file__).resolve().parent / "sql"
@@ -111,37 +134,71 @@ def main() -> None:
 
     # ===== Bootstrap Source + Source DQ =====
     connection = duckdb.connect(database=":memory:")
-    quoted_input_csv = _sql_quote(str(input_csv))
-    create_raw_source_sql = create_raw_source_sql_template.replace("{input_csv}", quoted_input_csv)
-    connection.execute(create_raw_source_sql)
+    total_rows = bad_rows = exact_duplicate_rows = 0
+    bad_ratio = 0.0
+    if build_shared:
+        quoted_input_csv = _sql_quote(str(input_csv))
+        create_raw_source_sql = create_raw_source_sql_template.replace("{input_csv}", quoted_input_csv)
+        connection.execute(create_raw_source_sql)
 
-    source_schema = connection.execute(describe_raw_source_sql).fetchall()
-    available_columns = {row[0] for row in source_schema}
-    missing_columns = sorted(REQUIRED_SOURCE_COLUMNS - available_columns)
-    if missing_columns: raise ValueError(f"Missing required source columns: {missing_columns}")
+        source_schema = connection.execute(describe_raw_source_sql).fetchall()
+        available_columns = {row[0] for row in source_schema}
+        missing_columns = sorted(REQUIRED_SOURCE_COLUMNS - available_columns)
+        if missing_columns: raise ValueError(f"Missing required source columns: {missing_columns}")
 
-    timestamp_quality = connection.execute(raw_bad_timestamp_counts_sql).fetchone()
-    total_rows = int(timestamp_quality[0] or 0)
-    bad_rows = int(timestamp_quality[1] or 0)
-    exact_duplicate_rows = int(connection.execute(raw_exact_duplicate_rows_sql).fetchone()[0] or 0)
-    bad_ratio = (bad_rows / total_rows) if total_rows else 0.0
-    if bad_ratio > args.bad_ts_threshold: raise ValueError(f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {args.bad_ts_threshold:.4f}")
-
-    # ===== Build Silver + Resolve As-Of Date =====
-    connection.execute(silver_sql)
+        timestamp_quality = connection.execute(raw_bad_timestamp_counts_sql).fetchone()
+        total_rows = int(timestamp_quality[0] or 0)
+        bad_rows = int(timestamp_quality[1] or 0)
+        exact_duplicate_rows = int(connection.execute(raw_exact_duplicate_rows_sql).fetchone()[0] or 0)
+        bad_ratio = (bad_rows / total_rows) if total_rows else 0.0
+        if bad_ratio > args.bad_ts_threshold: raise ValueError(f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {args.bad_ts_threshold:.4f}")
+        connection.execute(silver_sql)
+    else:
+        if not silver_path.exists():
+            raise FileNotFoundError(
+                f"Shared silver CSV not found: {silver_path}. "
+                "Run feature_store.build with --build-engines shared first."
+            )
+        connection.execute(
+            "CREATE OR REPLACE TEMP TABLE silver_transactions_line_items AS "
+            "SELECT "
+            "  trim(CAST(invoice_id AS VARCHAR)) AS invoice_id, "
+            "  trim(CAST(item_id AS VARCHAR)) AS item_id, "
+            "  nullif(trim(CAST(item_description AS VARCHAR)), '') AS item_description, "
+            "  CAST(try_cast(trim(CAST(quantity AS VARCHAR)) AS DOUBLE) AS INTEGER) AS quantity, "
+            "  try_strptime(trim(CAST(event_ts AS VARCHAR)), '%Y-%m-%d %H:%M:%S') AS event_ts, "
+            "  try_cast(trim(CAST(event_date AS VARCHAR)) AS DATE) AS event_date, "
+            "  try_cast(trim(CAST(unit_price AS VARCHAR)) AS DOUBLE) AS unit_price, "
+            "  try_cast(trim(CAST(line_revenue AS VARCHAR)) AS DOUBLE) AS line_revenue, "
+            "  trim(CAST(user_id AS VARCHAR)) AS user_id, "
+            "  trim(CAST(country AS VARCHAR)) AS country "
+            "FROM read_csv_auto(?, header=TRUE, all_varchar=TRUE, ignore_errors=TRUE)",
+            [str(silver_path)],
+        )
 
     propensity_as_of_date = None
     labels_path = None
     features_path = None
     propensity_train_path = None
-    if "purchase_propensity" in build_engines:
-        propensity_as_of_date_arg = args.purchase_propensity_as_of_date or args.as_of_date
-        if propensity_as_of_date_arg:
-            propensity_as_of_date = datetime.strptime(propensity_as_of_date_arg, "%Y-%m-%d").date()
+    build_purchase = "purchase_propensity" in build_engines
+    build_recommender = "recommender" in build_engines
+    silver_date_bounds = connection.execute("SELECT min(event_date), max(event_date) FROM silver_transactions_line_items").fetchone()
+    silver_min_date, silver_max_date = silver_date_bounds[0], silver_date_bounds[1]
+    if silver_min_date is None or silver_max_date is None:
+        raise ValueError("No rows in silver_transactions_line_items; cannot build gold layers")
+
+    if build_purchase:
+        if args.as_of_date:
+            propensity_as_of_date = datetime.strptime(args.as_of_date, "%Y-%m-%d").date()
         else:
             as_of_value = connection.execute(max_silver_event_date_sql).fetchone()[0]
             if as_of_value is None: raise ValueError("No rows in silver_transactions_line_items; cannot resolve as_of_date")
             propensity_as_of_date = as_of_value
+        if propensity_as_of_date < silver_min_date or propensity_as_of_date > silver_max_date:
+            raise ValueError(
+                f"Purchase propensity as_of_date {propensity_as_of_date} is outside available silver event_date bounds "
+                f"[{silver_min_date}, {silver_max_date}]"
+            )
         as_of_partition = f"as_of_date={propensity_as_of_date.isoformat()}"
         labels_path = propensity_root / "labels" / as_of_partition / "labels.csv"
         features_path = propensity_root / "user_features_asof" / as_of_partition / "user_features_asof.csv"
@@ -163,14 +220,21 @@ def main() -> None:
             connection.execute(sql)
 
     # ===== Build Gold: Recommender =====
-    if "recommender" in build_engines:
+    if build_recommender:
         recommender_time_filters = []
+        recommender_min_date = silver_min_date
+        recommender_max_date = silver_max_date
         if args.recommender_min_event_date:
-            datetime.strptime(args.recommender_min_event_date, "%Y-%m-%d")
+            recommender_min_date = datetime.strptime(args.recommender_min_event_date, "%Y-%m-%d").date()
             recommender_time_filters.append(f"AND event_date >= CAST('{args.recommender_min_event_date}' AS DATE)")
         if args.recommender_max_event_date:
-            datetime.strptime(args.recommender_max_event_date, "%Y-%m-%d")
+            recommender_max_date = datetime.strptime(args.recommender_max_event_date, "%Y-%m-%d").date()
             recommender_time_filters.append(f"AND event_date <= CAST('{args.recommender_max_event_date}' AS DATE)")
+        if recommender_min_date < silver_min_date or recommender_max_date > silver_max_date:
+            raise ValueError(
+                f"Recommender event-date bounds [{recommender_min_date}, {recommender_max_date}] exceed available silver bounds "
+                f"[{silver_min_date}, {silver_max_date}]"
+            )
         interactions_sql = interactions_sql_template.replace(
             "{recommender_time_filters}",
             "\n  ".join(recommender_time_filters) if recommender_time_filters else "",
@@ -181,14 +245,14 @@ def main() -> None:
 
     # ===== Run Dataset-Level DQ Checks =====
     dq_checks = []
-    if "recommender" in build_engines:
+    if build_recommender:
         dq_checks.extend(
             [
                 (dq_invalid_split_sql, "DQ_GOLD_005 failed: invalid split value in gold_user_item_splits"),
                 (dq_split_chronology_sql, "DQ_GOLD_006 failed: chronology violation in gold_user_item_splits"),
             ]
         )
-    if "purchase_propensity" in build_engines:
+    if build_purchase:
         dq_checks.extend(
             [
                 (dq_user_features_duplicates_sql, "DQ_GOLD_001 failed: duplicate (user_id, as_of_date) in gold_user_features_asof"),
@@ -200,8 +264,10 @@ def main() -> None:
         _run_dq_check(connection, dq_sql, dq_error)
 
     # ===== Materialize Outputs =====
-    artifacts = [("silver_transactions_line_items", "silver", "silver_transactions_line_items", silver_path)]
-    if "recommender" in build_engines:
+    artifacts = []
+    if build_shared:
+        artifacts.append(("silver_transactions_line_items", "silver", "silver_transactions_line_items", silver_path))
+    if build_recommender:
         artifacts.extend(
             [
                 ("gold_interaction_events", "gold", "gold_interaction_events", interactions_path),
@@ -210,7 +276,7 @@ def main() -> None:
                 ("gold_recommender_item_index", "gold", "gold_recommender_item_index", item_index_path),
             ]
         )
-    if "purchase_propensity" in build_engines:
+    if build_purchase:
         artifacts.extend(
             [
                 ("gold_labels", "gold", "gold_labels", labels_path),
@@ -236,7 +302,7 @@ def main() -> None:
         "built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "input": {"path": str(input_csv)},
         "params": {
-            "purchase_propensity_as_of_date": propensity_as_of_date.isoformat() if propensity_as_of_date else None,
+            "as_of_date": propensity_as_of_date.isoformat() if propensity_as_of_date else None,
             "build_engines": sorted(build_engines),
             "recommender_min_event_date": args.recommender_min_event_date,
             "recommender_max_event_date": args.recommender_max_event_date,
@@ -244,10 +310,10 @@ def main() -> None:
             "split_version": args.split_version,
         },
         "quality": {
-            "raw_total_rows": total_rows,
-            "raw_exact_duplicate_rows": exact_duplicate_rows,
-            "raw_bad_timestamp_rows": bad_rows,
-            "raw_bad_timestamp_ratio": round(bad_ratio, 6),
+            "raw_total_rows": total_rows if build_shared else None,
+            "raw_exact_duplicate_rows": exact_duplicate_rows if build_shared else None,
+            "raw_bad_timestamp_rows": bad_rows if build_shared else None,
+            "raw_bad_timestamp_ratio": round(bad_ratio, 6) if build_shared else None,
         },
         "artifacts": {},
     }

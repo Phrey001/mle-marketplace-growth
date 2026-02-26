@@ -2,7 +2,12 @@
 
 High-level architecture lives in `docs/architecture.pptx`.
 This doc is the implementation-facing spec for the purchase propensity engine.
-Temporal snapshot schedule is documented in `docs/purchase_propensity/snapshot_plan.md`.
+Temporal snapshot schedule is defined directly in cycle configs under `configs/purchase_propensity/`.
+
+## Spec Lifecycle
+
+- This spec starts as a preliminary design document derived from `docs/architecture.pptx`.
+- As code and run artifacts stabilize, it is finalized as the implementation contract for this repo.
 
 ## Objective
 
@@ -59,8 +64,8 @@ Split mode used by `run_pipeline.py`:
 | `out_of_time_10_1_1` (implicit) | Requires exactly 12 snapshots and splits into 10 train, 1 validation, 1 test month | Strict architecture-aligned demo cycle |
 
 Out-of-time slice selection:
-- Snapshot panel is monthly (`train_frequency=monthly`).
-- Train snapshots come from `train_as_of_dates` or generated `train_start_date..train_end_date`.
+- Snapshot panel is monthly.
+- Train snapshots are generated from `train_start_date..train_end_date`.
 - `out_of_time_10_1_1`: strict split = first 10 monthly slices train, 11th slice validation, 12th slice test.
 
 Training outputs:
@@ -142,7 +147,7 @@ The main training target remains `label_purchase_30d`.
 Feature-store gold tables now also materialize 60/90-day labels and 60/120-day lookback features for sensitivity analysis.
 
 Cadence and window alignment in current pipeline:
-- Generated snapshot panels use monthly cadence (`train_frequency=monthly`).
+- Generated snapshot panels use monthly cadence.
 - `prediction_window_days` and `feature_lookback_days` are separate config knobs.
 - Allowed sets are explicit: `prediction_window_days` `{30,60,90}` and `feature_lookback_days` `{60,90,120}`.
 - Training panel period is config-driven (`train_start_date`, `train_end_date` in cycle YAML configs).

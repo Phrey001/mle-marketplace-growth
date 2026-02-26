@@ -58,22 +58,29 @@ def _run_module(module: str, *args: object) -> None:
     print("Running:", " ".join(command))
     subprocess.run(command, check=True)
 
+
+def _load_yaml_defaults(path_value: str | None, label: str) -> dict:
+    if not path_value:
+        return {}
+    config_path = Path(path_value)
+    if not config_path.exists():
+        raise FileNotFoundError(f"{label} file not found: {config_path}")
+    if config_path.suffix.lower() not in {".yaml", ".yml"}:
+        raise ValueError(f"{label} file must use .yaml or .yml")
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} file must contain a key-value object")
+    return payload
+
 # ===== Entry Point =====
 def main() -> None:
     # ===== Parse Config Defaults =====
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--config", default=None, help="Optional YAML config file for pipeline arguments")
     pre_args, remaining_argv = pre_parser.parse_known_args()
-    if pre_args.config:
-        config_path = Path(pre_args.config)
-        if not config_path.exists(): raise FileNotFoundError(f"Config file not found: {config_path}")
-        if config_path.suffix.lower() not in {".yaml", ".yml"}: raise ValueError("Config file must use .yaml or .yml")
-        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(payload, dict): raise ValueError("Config file must contain a key-value object")
-        config_defaults = payload
-    else:
-        config_defaults = {}
-    cfg = config_defaults.get
+
+    engine_defaults = _load_yaml_defaults(pre_args.config, "Engine config")
+    cfg = engine_defaults.get
 
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
@@ -82,10 +89,8 @@ def main() -> None:
     parser.add_argument("--input-csv", default=cfg("input_csv", "data/bronze/online_retail_ii/raw.csv"), help="Path to raw source CSV")
     parser.add_argument("--output-root", default=cfg("output_root", "data"), help="Output root for feature-store build")
     parser.add_argument("--artifacts-dir", default=cfg("artifacts_dir", "artifacts/purchase_propensity"), help="Output directory for model/evaluation artifacts")
-    parser.add_argument("--train-as-of-dates", default=cfg("train_as_of_dates", ""), help="Comma-separated snapshots used for model training (advanced override)")
     parser.add_argument("--train-start-date", default=cfg("train_start_date", None), help="Optional start date (YYYY-MM-DD) for generated training snapshots")
     parser.add_argument("--train-end-date", default=cfg("train_end_date", None), help="Optional end date (YYYY-MM-DD) for generated training snapshots")
-    parser.add_argument("--train-frequency", choices=["monthly"], default=cfg("train_frequency", "monthly"), help="Frequency for generated training snapshots (monthly only)")
     parser.add_argument("--score-as-of-date", default=cfg("score_as_of_date", "2011-11-09"), help="Feature snapshot date used for scoring/evaluation")
     parser.add_argument("--prediction-window-days", type=int, default=int(cfg("prediction_window_days", 30)), help="Allowed values: 30, 60, 90 (strict demo execution path uses 30).")
     parser.add_argument("--feature-lookback-days", type=int, default=int(cfg("feature_lookback_days", 90)), help="Allowed values: 60, 90, 120 (strict demo execution path uses 90).")
@@ -99,19 +104,12 @@ def main() -> None:
     input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
     artifacts_dir = Path(args.artifacts_dir)
-    use_generated_dates = bool(args.train_start_date or args.train_end_date)
-    if not use_generated_dates and not args.train_as_of_dates.strip(): args.train_as_of_dates = "2011-11-09"
-    if use_generated_dates and args.train_as_of_dates.strip(): raise ValueError("Use either --train-as-of-dates or --train-start-date/--train-end-date, not both")
-    if use_generated_dates:
-        if not args.train_start_date or not args.train_end_date: raise ValueError("Both --train-start-date and --train-end-date are required together")
-        start_date = date.fromisoformat(args.train_start_date)
-        end_date = date.fromisoformat(args.train_end_date)
-        train_as_of_dates = _generate_snapshot_dates(start_date, end_date)
-    else:
-        train_as_of_dates = [value.strip() for value in args.train_as_of_dates.split(",") if value.strip()]
-
-    if not train_as_of_dates: raise ValueError("--train-as-of-dates must include at least one date")
-    if len(train_as_of_dates) != 12: raise ValueError("Strict architecture split requires exactly 12 --train-as-of-dates (10 train / 1 val / 1 test)")
+    if not args.train_start_date or not args.train_end_date:
+        raise ValueError("Both --train-start-date and --train-end-date are required")
+    start_date = date.fromisoformat(args.train_start_date)
+    end_date = date.fromisoformat(args.train_end_date)
+    train_as_of_dates = _generate_snapshot_dates(start_date, end_date)
+    if len(train_as_of_dates) != 12: raise ValueError("Strict architecture split requires exactly 12 monthly snapshots from --train-start-date/--train-end-date (10 train / 1 val / 1 test)")
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
@@ -120,8 +118,7 @@ def main() -> None:
     snapshots_to_build = set(train_as_of_dates)
     snapshots_to_build.add(args.score_as_of_date)
     for as_of_date in sorted(snapshots_to_build):
-        _run_module(
-            "mle_marketplace_growth.feature_store.build",
+        build_args: list[object] = [
             "--build-engines",
             "purchase_propensity",
             "--input-csv",
@@ -130,7 +127,8 @@ def main() -> None:
             output_root,
             "--as-of-date",
             as_of_date,
-        )
+        ]
+        _run_module("mle_marketplace_growth.feature_store.build", *build_args)
 
     # ===== Build Training Input =====
     train_paths = [

@@ -8,57 +8,47 @@ from mle_marketplace_growth.purchase_propensity import run_pipeline
 
 
 class RunPipelineArgValidationTest(unittest.TestCase):
-    STRICT_TWELVE_DATES = ",".join(
-        [
-            "2010-12-09",
-            "2011-01-09",
-            "2011-02-09",
-            "2011-03-09",
-            "2011-04-09",
-            "2011-05-09",
-            "2011-06-09",
-            "2011-07-09",
-            "2011-08-09",
-            "2011-09-09",
-            "2011-10-09",
-            "2011-11-09",
-        ]
-    )
+    STRICT_START_DATE = "2010-12-09"
+    STRICT_END_DATE = "2011-11-09"
 
     def test_strict_mode_requires_exactly_twelve_snapshots(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            "2011-11-09",
+            "--train-start-date",
+            "2011-01-09",
+            "--train-end-date",
+            "2011-09-09",
         ]
         with patch("sys.argv", argv):
             with self.assertRaisesRegex(
                 ValueError,
-                "Strict architecture split requires exactly 12 --train-as-of-dates",
+                "Strict architecture split requires exactly 12 monthly snapshots",
             ):
                 run_pipeline.main()
 
     def test_out_of_time_10_1_1_requires_exactly_twelve_snapshots(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            "2011-01-09,2011-02-09,2011-03-09",
+            "--train-start-date",
+            "2011-03-09",
+            "--train-end-date",
+            "2011-11-09",
         ]
         with patch("sys.argv", argv):
             with self.assertRaisesRegex(
                 ValueError,
-                "Strict architecture split requires exactly 12 --train-as-of-dates",
+                "Strict architecture split requires exactly 12 monthly snapshots",
             ):
                 run_pipeline.main()
 
-    def test_train_as_of_dates_cannot_be_empty(self) -> None:
+    def test_train_start_and_end_dates_are_required(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            ", ,",
+            "--train-start-date",
+            self.STRICT_START_DATE,
         ]
         with patch("sys.argv", argv):
-            with self.assertRaisesRegex(ValueError, "--train-as-of-dates must include at least one date"):
+            with self.assertRaisesRegex(ValueError, "Both --train-start-date and --train-end-date are required"):
                 run_pipeline.main()
 
     def test_config_requires_yaml_extension(self) -> None:
@@ -68,14 +58,16 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             config_path.write_text('{"train_as_of_dates": "2011-11-09"}', encoding="utf-8")
             argv = ["run_pipeline.py", "--config", str(config_path)]
             with patch("sys.argv", argv):
-                with self.assertRaisesRegex(ValueError, "Config file must use .yaml or .yml"):
+                with self.assertRaisesRegex(ValueError, "Engine config file must use .yaml or .yml"):
                     run_pipeline.main()
 
     def test_prediction_window_rejects_unsupported_main_pipeline_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            self.STRICT_TWELVE_DATES,
+            "--train-start-date",
+            self.STRICT_START_DATE,
+            "--train-end-date",
+            self.STRICT_END_DATE,
             "--prediction-window-days",
             "45",
         ]
@@ -86,8 +78,10 @@ class RunPipelineArgValidationTest(unittest.TestCase):
     def test_feature_lookback_window_rejects_unsupported_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            self.STRICT_TWELVE_DATES,
+            "--train-start-date",
+            self.STRICT_START_DATE,
+            "--train-end-date",
+            self.STRICT_END_DATE,
             "--feature-lookback-days",
             "30",
         ]
@@ -98,8 +92,10 @@ class RunPipelineArgValidationTest(unittest.TestCase):
     def test_feature_lookback_window_rejects_not_yet_wired_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-as-of-dates",
-            self.STRICT_TWELVE_DATES,
+            "--train-start-date",
+            self.STRICT_START_DATE,
+            "--train-end-date",
+            self.STRICT_END_DATE,
             "--feature-lookback-days",
             "150",
         ]
@@ -136,7 +132,12 @@ class RunPipelineArgValidationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
             config_path = tmp_root / "pipeline_config.yaml"
-            config_path.write_text("train_as_of_dates: '2011-11-09'\n", encoding="utf-8")
+            config_path.write_text(
+                "train_start_date: '2010-12-09'\n"
+                "train_end_date: '2011-11-09'\n"
+                "window_selection_mode: fixed\n",
+                encoding="utf-8",
+            )
 
             argv = [
                 "run_pipeline.py",
@@ -144,34 +145,10 @@ class RunPipelineArgValidationTest(unittest.TestCase):
                 str(config_path),
             ]
             with patch("sys.argv", argv):
-                with patch(
-                    "mle_marketplace_growth.purchase_propensity.run_pipeline._read_config_file",
-                    return_value={
-                        "train_as_of_dates": ",".join(
-                            [
-                                "2010-12-09",
-                                "2011-01-09",
-                                "2011-02-09",
-                                "2011-03-09",
-                                "2011-04-09",
-                                "2011-05-09",
-                                "2011-06-09",
-                                "2011-07-09",
-                                "2011-08-09",
-                                "2011-09-09",
-                                "2011-10-09",
-                                "2011-11-09",
-                            ]
-                        ),
-                        "score_as_of_date": "2011-11-09",
-                    },
-                ):
-                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline._build_snapshot") as mock_build:
-                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline._run") as mock_run:
-                            with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
-                                with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
-                                    run_pipeline.main()
-            self.assertTrue(mock_build.called)
+                with patch("mle_marketplace_growth.purchase_propensity.run_pipeline._run_module") as mock_run:
+                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
+                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
+                            run_pipeline.main()
             self.assertTrue(mock_run.called)
 
 

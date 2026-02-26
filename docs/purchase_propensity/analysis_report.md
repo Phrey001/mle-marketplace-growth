@@ -1,8 +1,10 @@
 # Purchase Propensity — Analytical Report
 
-_Based on latest local artifacts in `artifacts/purchase_propensity/cycle_initial/` and `artifacts/purchase_propensity/cycle_retrain/`._
+## Report Metadata
 
-_Update this report or append new version (not automated) after each recommended quickstart run if there are significant updates._
+- Artifact source: `artifacts/purchase_propensity/cycle_initial/` and `artifacts/purchase_propensity/cycle_retrain/`
+- Run scope: two-cycle purchase propensity demo (`cycle_initial` + `cycle_retrain`) from the recommended quickstart flow
+- Update policy: update this report (or append a new version) after reruns with material result changes
 
 ## 1) Executive Summary
 

@@ -147,7 +147,6 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                         f"artifacts_dir: \"{artifacts_root}\"",
                         "train_start_date: \"2010-12-10\"",
                         "train_end_date: \"2011-11-10\"",
-                        "train_frequency: \"monthly\"",
                         "score_as_of_date: \"2011-11-10\"",
                         "prediction_window_days: 30",
                         "feature_lookback_days: 90",
@@ -157,6 +156,20 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                 )
                 + "\n",
                 encoding="utf-8",
+            )
+            self._run(
+                [
+                    ".venv/bin/python",
+                    "-m",
+                    "mle_marketplace_growth.feature_store.build",
+                    "--build-engines",
+                    "shared",
+                    "--input-csv",
+                    str(input_csv),
+                    "--output-root",
+                    str(output_root),
+                ],
+                env,
             )
             self._run(
                 [

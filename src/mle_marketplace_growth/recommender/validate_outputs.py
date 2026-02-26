@@ -99,9 +99,20 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
     test_metrics = json.loads((artifacts_dir / "test_retrieval_metrics.json").read_text(encoding="utf-8"))
     selected_model = train_metrics.get("selected_model_name", "unknown")
     selection_rule = train_metrics.get("selection_rule", "")
+    catalog_size = int(train_metrics.get("counts", {}).get("items_train_universe", 0))
+    k_values = [int(value) for value in train_metrics.get("k_values", []) if int(value) > 0]
+    anchor_k = 20 if 20 in k_values else (max(k_values) if k_values else 20)
+    random_anchor = (anchor_k / catalog_size) if catalog_size > 0 else 0.0
 
     val_by_model = {row["model_name"]: row.get("metrics", {}) for row in validation_metrics.get("rows", [])}
     test_by_model = {row["model_name"]: row.get("metrics", {}) for row in test_metrics.get("rows", [])}
+    def _lift(observed: float) -> str:
+        if random_anchor <= 0:
+            return "n/a"
+        return f"{(observed / random_anchor):.2f}x"
+
+    val_recall = {model: float(metrics.get(f"Recall@{anchor_k}", 0.0)) for model, metrics in val_by_model.items()}
+    test_recall = {model: float(metrics.get(f"Recall@{anchor_k}", 0.0)) for model, metrics in test_by_model.items()}
     lines = [
         "# Recommender Automated Interpretation",
         "",
@@ -109,15 +120,20 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
         f"- Selected model: `{selected_model}`",
         f"- Selection rule: `{selection_rule}`",
         "",
+        "## Random Baseline Anchor",
+        f"- Catalog size (N): {catalog_size}",
+        f"- Recommendation depth (K): {anchor_k}",
+        f"- Random Recall@{anchor_k} anchor (K/N): {random_anchor:.6f}",
+        "",
         "## Validation Snapshot",
-        f"- Two-tower Recall@20: {val_by_model.get('two_tower', {}).get('Recall@20', 0.0):.4f}",
-        f"- MF Recall@20: {val_by_model.get('mf', {}).get('Recall@20', 0.0):.4f}",
-        f"- Popularity Recall@20: {val_by_model.get('popularity', {}).get('Recall@20', 0.0):.4f}",
+        f"- Two-tower Recall@{anchor_k}: {val_recall.get('two_tower', 0.0):.4f} (lift vs random anchor: {_lift(val_recall.get('two_tower', 0.0))})",
+        f"- MF Recall@{anchor_k}: {val_recall.get('mf', 0.0):.4f} (lift vs random anchor: {_lift(val_recall.get('mf', 0.0))})",
+        f"- Popularity Recall@{anchor_k}: {val_recall.get('popularity', 0.0):.4f} (lift vs random anchor: {_lift(val_recall.get('popularity', 0.0))})",
         "",
         "## Test Snapshot",
-        f"- Two-tower Recall@20: {test_by_model.get('two_tower', {}).get('Recall@20', 0.0):.4f}",
-        f"- MF Recall@20: {test_by_model.get('mf', {}).get('Recall@20', 0.0):.4f}",
-        f"- Popularity Recall@20: {test_by_model.get('popularity', {}).get('Recall@20', 0.0):.4f}",
+        f"- Two-tower Recall@{anchor_k}: {test_recall.get('two_tower', 0.0):.4f} (lift vs random anchor: {_lift(test_recall.get('two_tower', 0.0))})",
+        f"- MF Recall@{anchor_k}: {test_recall.get('mf', 0.0):.4f} (lift vs random anchor: {_lift(test_recall.get('mf', 0.0))})",
+        f"- Popularity Recall@{anchor_k}: {test_recall.get('popularity', 0.0):.4f} (lift vs random anchor: {_lift(test_recall.get('popularity', 0.0))})",
         "",
         "_Scope: offline ranking quality only; causal business lift needs online experiment._",
         "",

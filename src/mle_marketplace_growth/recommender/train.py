@@ -10,8 +10,13 @@ import numpy as np
 
 from mle_marketplace_growth.recommender.artifacts import _write_ann_index, _write_json
 from mle_marketplace_growth.recommender.data import _build_interactions, _load_entity_index, _load_split_rows, _validate_split_chronology
-from mle_marketplace_growth.recommender.eval import _evaluate_model, _user_eval_pool
+from mle_marketplace_growth.recommender.eval import _evaluate_model, _user_eval_pool  # re-exported for existing tests/imports
 from mle_marketplace_growth.recommender.models import _popularity_scores, _train_mf, _train_two_tower
+
+
+def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    return matrix / np.maximum(norms, 1e-12)
 
 
 def main() -> None:
@@ -24,8 +29,24 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs for two-tower model")
     parser.add_argument("--learning-rate", type=float, default=0.05, help="Learning rate for two-tower model")
     parser.add_argument("--negative-samples", type=int, default=3, help="Negative samples per positive pair")
+    parser.add_argument("--batch-size", type=int, default=4096, help="Two-tower positive-pair batch size")
     parser.add_argument("--l2-reg", type=float, default=1e-4, help="L2 regularization strength for two-tower updates")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Gradient clipping norm for two-tower training (0 disables)")
+    parser.add_argument("--early-stop-rounds", type=int, default=3, help="Stop two-tower after this many non-improving epochs (0 disables)")
+    parser.add_argument("--early-stop-metric", choices=["loss", "val_recall_at_k"], default="val_recall_at_k", help="Two-tower early-stop metric")
+    parser.add_argument("--early-stop-k", type=int, default=20, help="K used by validation Recall@K early stopping")
+    parser.add_argument("--early-stop-tolerance", type=float, default=1e-4, help="Minimum metric improvement to count as progress")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Softmax temperature for two-tower logits (>0)")
+    parser.add_argument("--normalize-embeddings", type=int, choices=[0, 1], default=1, help="L2-normalize user/item embeddings during scoring (1=yes)")
+    parser.add_argument("--tower-hidden-dim", type=int, default=0, help="Two-tower MLP hidden dimension (0 disables MLP tower)")
+    parser.add_argument("--tower-dropout", type=float, default=0.0, help="Two-tower MLP dropout rate")
+    parser.add_argument("--device", choices=["auto"], default="auto", help="Device mode for two-tower training (auto=cuda if available else cpu)")
     parser.add_argument("--mf-components", type=int, default=32, help="Latent factors for MF baseline")
+    parser.add_argument("--mf-n-iter", type=int, default=15, help="Iteration budget for MF SVD solver")
+    parser.add_argument("--mf-weighting", choices=["binary", "tfidf"], default="tfidf", help="Input weighting mode for MF")
+    parser.add_argument("--mf-algorithm", choices=["randomized", "arpack"], default="randomized", help="MF SVD solver")
+    parser.add_argument("--mf-tol", type=float, default=0.0, help="MF error tolerance (used by arpack solver)")
+    parser.add_argument("--popularity-transform", choices=["linear", "log1p"], default="log1p", help="Score transform for popularity baseline")
     parser.add_argument("--top-ks", default="10,20", help="Comma-separated K values for offline metrics")
     args = parser.parse_args()
 
@@ -40,9 +61,34 @@ def main() -> None:
     train, validation, test = _build_interactions(rows)
     user_ids, user_to_idx = _load_entity_index(Path(args.user_index_csv), id_col="user_id", idx_col="user_idx")
     item_ids, item_to_idx = _load_entity_index(Path(args.item_index_csv), id_col="item_id", idx_col="item_idx")
+    print(
+        "[recommender.train] loaded splits:",
+        f"train_users={len(train)}, val_users={len(validation)}, test_users={len(test)}, item_universe={len(item_ids)}",
+    )
+    print(
+        "[recommender.train] config:",
+        f"embedding_dim={args.embedding_dim}, epochs={args.epochs}, lr={args.learning_rate}, negatives={args.negative_samples}, batch_size={args.batch_size}, l2={args.l2_reg}, max_grad_norm={args.max_grad_norm}",
+    )
+    print(
+        "[recommender.train] convergence:",
+        f"early_stop_rounds={args.early_stop_rounds}, early_stop_metric={args.early_stop_metric}, early_stop_tolerance={args.early_stop_tolerance}, early_stop_k={args.early_stop_k}, temperature={args.temperature}, normalize_embeddings={bool(args.normalize_embeddings)}, tower_hidden_dim={args.tower_hidden_dim}, tower_dropout={args.tower_dropout}, device={args.device}, mf_algorithm={args.mf_algorithm}, mf_tol={args.mf_tol}",
+    )
 
-    popularity = _popularity_scores(train, item_to_idx)
-    mf_user, mf_item = _train_mf(train, user_to_idx, item_to_idx, args.mf_components)
+    popularity = _popularity_scores(train, item_to_idx, transform=args.popularity_transform)
+    print("[recommender.train] trained popularity baseline")
+    mf_user, mf_item = _train_mf(
+        train,
+        user_to_idx,
+        item_to_idx,
+        args.mf_components,
+        n_iter=args.mf_n_iter,
+        weighting=args.mf_weighting,
+        algorithm=args.mf_algorithm,
+        tol=args.mf_tol,
+    )
+    print(
+        f"[recommender.train] trained mf baseline (components={args.mf_components}, n_iter={args.mf_n_iter}, weighting={args.mf_weighting}, algorithm={args.mf_algorithm})"
+    )
     tt_user, tt_item = _train_two_tower(
         train,
         user_to_idx,
@@ -51,8 +97,24 @@ def main() -> None:
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         negative_samples=args.negative_samples,
+        batch_size=max(1, args.batch_size),
         l2_reg=args.l2_reg,
+        max_grad_norm=max(0.0, args.max_grad_norm),
+        early_stop_rounds=max(0, args.early_stop_rounds),
+        early_stop_metric=args.early_stop_metric,
+        early_stop_k=max(1, args.early_stop_k),
+        early_stop_tolerance=max(0.0, args.early_stop_tolerance),
+        validation_interactions=validation,
+        temperature=float(args.temperature),
+        normalize_embeddings=bool(args.normalize_embeddings),
+        tower_hidden_dim=max(0, args.tower_hidden_dim),
+        tower_dropout=max(0.0, args.tower_dropout),
+        device=args.device,
+        verbose=True,
     )
+    if bool(args.normalize_embeddings):
+        tt_user, tt_item = _l2_normalize_rows(tt_user), _l2_normalize_rows(tt_item)
+    print("[recommender.train] trained two_tower")
 
     model_names = ["popularity", "mf", "two_tower"]
     metrics_by_split = {
@@ -76,9 +138,23 @@ def main() -> None:
         for split_name, split_rows in [("validation", validation), ("test", test)]
     }
     validation_metrics, test_metrics = metrics_by_split["validation"], metrics_by_split["test"]
-
     select_k = 20 if 20 in top_ks else max(top_ks)
+    for row in validation_metrics:
+        print(
+            "[recommender.train] validation:",
+            row["model_name"],
+            f"Recall@{select_k}={row['metrics'].get(f'Recall@{select_k}', 0.0):.6f}",
+        )
+
     selected_model_name = max(validation_metrics, key=lambda row: row["metrics"].get(f"Recall@{select_k}", 0.0))["model_name"]
+    print(f"[recommender.train] selected_model={selected_model_name} by Recall@{select_k}")
+    selected_test_row = next((row for row in test_metrics if row["model_name"] == selected_model_name), None)
+    if selected_test_row is not None:
+        print(
+            "[recommender.train] test:",
+            selected_model_name,
+            f"Recall@{select_k}={selected_test_row['metrics'].get(f'Recall@{select_k}', 0.0):.6f}",
+        )
     selected_item_embeddings = {"two_tower": tt_item, "mf": mf_item, "popularity": popularity.reshape(-1, 1)}[selected_model_name]
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -129,8 +205,24 @@ def main() -> None:
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,
             "negative_samples": args.negative_samples,
+            "batch_size": max(1, args.batch_size),
             "l2_reg": args.l2_reg,
+            "max_grad_norm": max(0.0, args.max_grad_norm),
+            "early_stop_rounds": max(0, args.early_stop_rounds),
+            "early_stop_metric": args.early_stop_metric,
+            "early_stop_k": max(1, args.early_stop_k),
+            "early_stop_tolerance": max(0.0, args.early_stop_tolerance),
+            "temperature": float(args.temperature),
+            "normalize_embeddings": bool(args.normalize_embeddings),
+            "tower_hidden_dim": max(0, args.tower_hidden_dim),
+            "tower_dropout": max(0.0, args.tower_dropout),
+            "device": args.device,
             "mf_components": args.mf_components,
+            "mf_n_iter": args.mf_n_iter,
+            "mf_weighting": args.mf_weighting,
+            "mf_algorithm": args.mf_algorithm,
+            "mf_tol": args.mf_tol,
+            "popularity_transform": args.popularity_transform,
             "ann_backend": ann_metadata.get("backend"),
         },
     })

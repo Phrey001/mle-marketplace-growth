@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "model_name": "popularity",
+      "eligible_users": 4168,
+      "metrics": {
+        "Recall@10": 0.036948,
+        "NDCG@10": 0.0176,
+        "HitRate@10": 0.036948,
+        "Recall@20": 0.056382,
+        "NDCG@20": 0.02261,
+        "HitRate@20": 0.056382
+      }
+    },
+    {
+      "model_name": "mf",
+      "eligible_users": 4168,
+      "metrics": {
+        "Recall@10": 0.083013,
+        "NDCG@10": 0.044036,
+        "HitRate@10": 0.083013,
+        "Recall@20": 0.125,
+        "NDCG@20": 0.054625,
+        "HitRate@20": 0.125
+      }
+    },
+    {
+      "model_name": "two_tower",
+      "eligible_users": 4168,
+      "metrics": {
+        "Recall@10": 0.066939,
+        "NDCG@10": 0.035511,
+        "HitRate@10": 0.066939,
+        "Recall@20": 0.096209,
+        "NDCG@20": 0.042797,
+        "HitRate@20": 0.096209
+      }
+    }
+  ],
+  "k_values": [
+    10,
+    20
+  ]
+}

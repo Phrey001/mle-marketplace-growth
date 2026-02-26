@@ -23,7 +23,7 @@
 - ML targeted users (test): 1000
 
 ## Window Validation
-- Window sensitivity not available.
+- Window sensitivity not run in fixed mode.
 - Use this for model-signal comparison only; it is not an automatic business-window selection rule.
 
 _Scope note: offline predictive policy evaluation only; not causal promotional incrementality._

@@ -1,10 +1,9 @@
 train_start_date: "2010-12-09" # rolling retrain cycle start (monthly snapshots)
 train_end_date: "2011-11-09" # rolling retrain cycle end (12 snapshots total)
-train_frequency: "monthly" # snapshot cadence (monthly only)
 score_as_of_date: "2011-11-09" # cycle score/evaluation snapshot
 window_selection_mode: "fixed" # keep structural decisions fixed; no reopen of structural search
-prediction_window_days: 90 # frozen from initial-cycle sensitivity
-feature_lookback_days: 120 # frozen from initial-cycle sensitivity
+prediction_window_days: 90 # use frozen value selected in initial-cycle sensitivity
+feature_lookback_days: 120 # use frozen value selected in initial-cycle sensitivity
 force_propensity_model: "xgboost" # frozen from initial-cycle sensitivity
 budget: 5000.0 # budget used in offline policy allocation
 cost_per_user: 5.0 # assumed unit incentive cost per targeted user
