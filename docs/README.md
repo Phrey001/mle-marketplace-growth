@@ -11,8 +11,10 @@ The Markdown documents are organized by purpose:
   - `docs/purchase_propensity/snapshot_plan.md`
   - `configs/purchase_propensity/`
   - `docs/recommender/spec.md`
+  - (Each engine spec includes its own tech stack section)
 - **Runbook**
-  - `docs/quickstart.md`
+  - `docs/purchase_propensity/quickstart.md`
+  - `docs/recommender/quickstart.md`
 - **Shared data/feature conventions**
   - `docs/feature_store/overview.md`
   - `docs/feature_store/dq_spec.md`

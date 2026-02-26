@@ -1,0 +1,8 @@
+input_csv: "data/bronze/online_retail_ii/raw.csv" # source transaction file
+output_root: "data" # feature-store materialization root
+artifacts_dir: "artifacts/recommender" # recommender artifact output folder
+split_version: "time_rank_v1" # split strategy ID; each ID maps to a specific train/val/test split rule
+recommender_min_event_date: "2010-12-01" # fixed lower bound for reproducible demo window
+recommender_max_event_date: "2011-11-30" # fixed upper bound for reproducible demo window
+top_k: 20 # serving output candidates per user
+top_ks: "10,20" # evaluation metric cutoffs (compute Recall/NDCG/HitRate at K=10 and K=20)

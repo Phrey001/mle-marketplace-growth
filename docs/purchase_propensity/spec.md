@@ -19,6 +19,13 @@ Expected value in this repo:
 - Policy comparison uses holdout-window realized outcomes (`label_purchase_30d`, `label_net_revenue_30d`).
 - True incremental business impact still requires randomized online experimentation.
 
+## Tech Stack
+
+- Feature/data layer: DuckDB SQL + CSV materialization.
+- Propensity modeling: scikit-learn (`logistic_regression`) and XGBoost (`xgboost`).
+- Revenue modeling: XGBoost regressor with constant fallback baseline for comparison.
+- Backtest/evaluation: Python + JSON/CSV artifacts + matplotlib report assets.
+
 ## Current Pipeline
 
 ### 1) Feature Store Build
@@ -111,7 +118,7 @@ Budget-constrained policy comparison on holdout slices (validation/test) is also
 - `random_baseline`
 - `rfm_heuristic`
 
-Executable commands are documented in `docs/quickstart.md`.
+Executable commands are documented in `docs/purchase_propensity/quickstart.md`.
 
 ### 5) Serving Snapshot Scoring (Operational Output)
 
@@ -191,4 +198,4 @@ Policy backtest outputs are produced for both validation and test slices:
 
 Integration test that mirrors the recommended run flow (using a compact fixture dataset):
 - `tests/test_purchase_propensity_integration.py`
-- Test execution commands are documented in `docs/quickstart.md`.
+- Test execution commands are documented in `docs/purchase_propensity/quickstart.md`.

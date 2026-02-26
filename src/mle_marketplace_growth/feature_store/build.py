@@ -5,12 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    import duckdb
-except ModuleNotFoundError as exc:
-    raise ModuleNotFoundError(
-        "duckdb is required. Install dependencies with `pip install -r requirements.txt`."
-    ) from exc
+import duckdb
 
 
 REQUIRED_SOURCE_COLUMNS = {
@@ -52,8 +47,7 @@ def _copy_table_to_csv(
 
 def _run_dq_check(connection: duckdb.DuckDBPyConnection, sql: str, error_message: str) -> None:
     failing_rows = int(connection.execute(sql).fetchone()[0] or 0)
-    if failing_rows > 0:
-        raise ValueError(error_message)
+    if failing_rows > 0: raise ValueError(error_message)
 
 
 # ===== Entry Point =====
@@ -74,15 +68,12 @@ def main() -> None:
 
     input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
-    if not input_csv.exists():
-        raise FileNotFoundError(f"Input CSV not found: {input_csv}")
+    if not input_csv.exists(): raise FileNotFoundError(f"Input CSV not found: {input_csv}")
     build_engines = {value.strip() for value in args.build_engines.split(",") if value.strip()}
     supported_engines = {"purchase_propensity", "recommender"}
     unknown_engines = sorted(build_engines - supported_engines)
-    if unknown_engines:
-        raise ValueError(f"Unsupported engine(s) in --build-engines: {unknown_engines}")
-    if not build_engines:
-        raise ValueError("--build-engines must include at least one supported engine")
+    if unknown_engines: raise ValueError(f"Unsupported engine(s) in --build-engines: {unknown_engines}")
+    if not build_engines: raise ValueError("--build-engines must include at least one supported engine")
 
     # ===== Load SQL Assets =====
     sql_dir = Path(__file__).resolve().parent / "sql"
@@ -100,6 +91,8 @@ def main() -> None:
     silver_sql = _load_sql(sql_dir / "silver" / "transactions_line_items.sql")
     interactions_sql_template = _load_sql(sql_dir / "gold" / "recommender" / "interaction_events.sql")
     user_item_splits_sql_template = _load_sql(sql_dir / "gold" / "recommender" / "user_item_splits.sql")
+    user_index_sql = _load_sql(sql_dir / "gold" / "recommender" / "user_index.sql")
+    item_index_sql = _load_sql(sql_dir / "gold" / "recommender" / "item_index.sql")
     labels_sql_template = _load_sql(sql_dir / "gold" / "purchase_propensity" / "labels.sql")
     user_features_sql_template = _load_sql(sql_dir / "gold" / "purchase_propensity" / "user_features_asof.sql")
     propensity_train_sql_template = _load_sql(sql_dir / "gold" / "purchase_propensity" / "propensity_train_dataset.sql")
@@ -125,18 +118,14 @@ def main() -> None:
     source_schema = connection.execute(describe_raw_source_sql).fetchall()
     available_columns = {row[0] for row in source_schema}
     missing_columns = sorted(REQUIRED_SOURCE_COLUMNS - available_columns)
-    if missing_columns:
-        raise ValueError(f"Missing required source columns: {missing_columns}")
+    if missing_columns: raise ValueError(f"Missing required source columns: {missing_columns}")
 
     timestamp_quality = connection.execute(raw_bad_timestamp_counts_sql).fetchone()
     total_rows = int(timestamp_quality[0] or 0)
     bad_rows = int(timestamp_quality[1] or 0)
     exact_duplicate_rows = int(connection.execute(raw_exact_duplicate_rows_sql).fetchone()[0] or 0)
     bad_ratio = (bad_rows / total_rows) if total_rows else 0.0
-    if bad_ratio > args.bad_ts_threshold:
-        raise ValueError(
-            f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {args.bad_ts_threshold:.4f}"
-        )
+    if bad_ratio > args.bad_ts_threshold: raise ValueError(f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {args.bad_ts_threshold:.4f}")
 
     # ===== Build Silver + Resolve As-Of Date =====
     connection.execute(silver_sql)
@@ -151,8 +140,7 @@ def main() -> None:
             propensity_as_of_date = datetime.strptime(propensity_as_of_date_arg, "%Y-%m-%d").date()
         else:
             as_of_value = connection.execute(max_silver_event_date_sql).fetchone()[0]
-            if as_of_value is None:
-                raise ValueError("No rows in silver_transactions_line_items; cannot resolve as_of_date")
+            if as_of_value is None: raise ValueError("No rows in silver_transactions_line_items; cannot resolve as_of_date")
             propensity_as_of_date = as_of_value
         as_of_partition = f"as_of_date={propensity_as_of_date.isoformat()}"
         labels_path = propensity_root / "labels" / as_of_partition / "labels.csv"
@@ -163,6 +151,8 @@ def main() -> None:
         manifest_path = gold_root / "_meta" / "run_manifest.json"
     interactions_path = recommender_root / "interaction_events" / "interaction_events.csv"
     user_item_splits_path = recommender_root / "user_item_splits" / "user_item_splits.csv"
+    user_index_path = recommender_root / "user_index" / "user_index.csv"
+    item_index_path = recommender_root / "item_index" / "item_index.csv"
 
     # ===== Build Gold: Purchase Propensity =====
     if "purchase_propensity" in build_engines:
@@ -186,7 +176,7 @@ def main() -> None:
             "\n  ".join(recommender_time_filters) if recommender_time_filters else "",
         )
         user_item_splits_sql = user_item_splits_sql_template.replace("{split_version}", args.split_version)
-        for sql in [interactions_sql, user_item_splits_sql]:
+        for sql in [interactions_sql, user_item_splits_sql, user_index_sql, item_index_sql]:
             connection.execute(sql)
 
     # ===== Run Dataset-Level DQ Checks =====
@@ -216,6 +206,8 @@ def main() -> None:
             [
                 ("gold_interaction_events", "gold", "gold_interaction_events", interactions_path),
                 ("gold_user_item_splits", "gold", "gold_user_item_splits", user_item_splits_path),
+                ("gold_recommender_user_index", "gold", "gold_recommender_user_index", user_index_path),
+                ("gold_recommender_item_index", "gold", "gold_recommender_item_index", item_index_path),
             ]
         )
     if "purchase_propensity" in build_engines:

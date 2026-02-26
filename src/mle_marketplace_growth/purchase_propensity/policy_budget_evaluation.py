@@ -15,8 +15,7 @@ POLICIES = [
 def _load_rows(path: Path, purchase_label_col: str, revenue_label_col: str) -> list[dict]:
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
-    if not rows:
-        raise ValueError(f"No rows found in scores CSV: {path}")
+    if not rows: raise ValueError(f"No rows found in scores CSV: {path}")
     required_columns = {
         "user_id",
         "as_of_date",
@@ -27,8 +26,7 @@ def _load_rows(path: Path, purchase_label_col: str, revenue_label_col: str) -> l
         revenue_label_col,
     }
     missing_columns = sorted(required_columns - set(rows[0].keys()))
-    if missing_columns:
-        raise ValueError(f"Missing columns in scores CSV: {missing_columns}")
+    if missing_columns: raise ValueError(f"Missing columns in scores CSV: {missing_columns}")
     return rows
 
 
@@ -43,8 +41,7 @@ def _policy_metrics(
 ) -> dict:
     ranked_rows = sorted(rows, key=lambda row: float(row[score_col]), reverse=True)
     selected_rows = ranked_rows[:target_count]
-    if not selected_rows:
-        raise ValueError(f"No selected rows for policy={policy_name} and target_count={target_count}")
+    if not selected_rows: raise ValueError(f"No selected rows for policy={policy_name} and target_count={target_count}")
     targeted_users = len(selected_rows)
     revenue_total = sum(float(row[revenue_label_col]) for row in selected_rows)
     purchase_rate = sum(float(row[purchase_label_col]) for row in selected_rows) / targeted_users
@@ -68,15 +65,12 @@ def main() -> None:
     parser.add_argument("--revenue-label-col", default="label_net_revenue_30d", help="Revenue label column")
     args = parser.parse_args()
 
-    if args.budget <= 0.0:
-        raise ValueError("--budget must be greater than 0")
-    if args.cost_per_user <= 0.0:
-        raise ValueError("--cost-per-user must be greater than 0")
+    if args.budget <= 0.0: raise ValueError("--budget must be greater than 0")
+    if args.cost_per_user <= 0.0: raise ValueError("--cost-per-user must be greater than 0")
 
     rows = _load_rows(Path(args.scores_csv), args.purchase_label_col, args.revenue_label_col)
     target_count = int(args.budget // args.cost_per_user)
-    if target_count < 1:
-        raise ValueError("Budget is too small to target any user.")
+    if target_count < 1: raise ValueError("Budget is too small to target any user.")
 
     policy_comparison = [
         _policy_metrics(

@@ -23,9 +23,28 @@ The result is lower incremental revenue and inefficient budget use.
 
 ## Getting Started
 
-- Run setup, recommended commands, output checks, tests, and automated interpretation review from `docs/quickstart.md`.
+Environment setup (one-time):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+- Use engine-specific runbooks:
+  - `docs/purchase_propensity/quickstart.md`
+  - `docs/recommender/quickstart.md`
 - Modeling choices (scaling, spend capping, calibration) are documented in `docs/purchase_propensity/spec.md`.
 - Window sensitivity now evaluates materialized feature-lookback profiles (`60/90/120`) for model-design comparison; main pipeline default remains `30d` target + `90d` lookback.
+
+## Tech Stack
+
+- Shared: Python, DuckDB, NumPy, Pandas-style CSV artifacts, YAML config.
+- Purchase propensity: scikit-learn + XGBoost.
+- Recommender: scikit-learn (MF baseline), PyTorch (two-tower training), FAISS (ANN retrieval).
+- Detailed per-engine stack and design contracts:
+  - `docs/purchase_propensity/spec.md`
+  - `docs/recommender/spec.md`
 
 ## Portfolio Signal Snapshot (Purchase Propensity)
 

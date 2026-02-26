@@ -3,3 +3,5 @@ scikit-learn>=1.4.0
 matplotlib>=3.8.0
 xgboost>=2.0.0
 pyyaml>=6.0.0
+faiss-cpu>=1.8.0
+torch>=2.2.0

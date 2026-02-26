@@ -19,29 +19,26 @@ def main() -> None:
     input_path = Path(args.input_csv)
     model_path = Path(args.model_path)
     output_path = Path(args.output_csv)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input CSV not found: {input_path}")
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model not found: {model_path}")
+    if not input_path.exists(): raise FileNotFoundError(f"Input CSV not found: {input_path}")
+    if not model_path.exists(): raise FileNotFoundError(f"Model not found: {model_path}")
 
     # ===== Load Trained Artifacts =====
     with model_path.open("rb") as file:
         model_bundle = pickle.load(file)
 
     vectorizer = model_bundle["vectorizer"]
-    propensity_model = model_bundle.get("propensity_model") or model_bundle["model"]
-    revenue_model = model_bundle.get("revenue_model")
-    revenue_fallback_value = float(model_bundle.get("revenue_fallback_value", 0.0))
+    propensity_model = model_bundle["propensity_model"]
+    revenue_model = model_bundle["revenue_model"]
+    revenue_fallback_value = float(model_bundle["revenue_fallback_value"])
     feature_columns = model_bundle["feature_columns"]
-    spend_cap_value = float(model_bundle.get("spend_cap_value", float("inf")))
-    feature_lookback_days = int(model_bundle.get("feature_lookback_days", 90))
-    prediction_window_days = int(model_bundle.get("prediction_window_days", 30))
+    spend_cap_value = float(model_bundle["spend_cap_value"])
+    feature_lookback_days = int(model_bundle["feature_lookback_days"])
+    prediction_window_days = int(model_bundle["prediction_window_days"])
     spend_feature = f"monetary_{feature_lookback_days}d"
 
     with input_path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
-    if not rows:
-        raise ValueError(f"No rows found in input dataset: {input_path}")
+    if not rows: raise ValueError(f"No rows found in input dataset: {input_path}")
 
     # ===== Score Users =====
     feature_rows = []

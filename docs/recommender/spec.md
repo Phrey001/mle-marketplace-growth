@@ -18,6 +18,13 @@ Primary business intent:
 - Out of scope: feature-rich post-retrieval ranking model, online serving stack, and online A/B experimentation.
 - Evaluation is offline only; no causal impact claim.
 
+## Tech Stack
+
+- Feature/data layer: DuckDB SQL + CSV materialization.
+- Baselines: NumPy + scikit-learn (`TruncatedSVD` for MF).
+- Two-tower training: PyTorch.
+- Retrieval serving index: FAISS HNSW (inner-product ANN), fail-fast required.
+
 ## Inputs and Data Model
 
 Primary source table (already materialized by feature-store build):
@@ -68,7 +75,8 @@ Serving contract (slide-aligned):
 - precompute and persist item embeddings from the selected model
 - compute user embeddings at scoring time
 - retrieve Top-K candidates via user-item dot product
-- support ANN-based nearest-neighbor retrieval for large catalogs (exact search fallback is acceptable for demo-scale catalogs)
+- retrieve Top-K candidates via ANN nearest-neighbor index (FAISS HNSW, inner product)
+- fail fast if FAISS ANN backend is unavailable
 
 ## Offline Evaluation
 
@@ -96,6 +104,8 @@ Business interpretation note:
 Feature-store outputs (already available):
 - `data/gold/feature_store/recommender/interaction_events/interaction_events.csv`
 - `data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv`
+- `data/gold/feature_store/recommender/user_index/user_index.csv`
+- `data/gold/feature_store/recommender/item_index/item_index.csv`
 
 Training/eval artifacts (to be implemented):
 - `artifacts/recommender/train_metrics.json`
@@ -103,7 +113,7 @@ Training/eval artifacts (to be implemented):
 - `artifacts/recommender/test_retrieval_metrics.json`
 - `artifacts/recommender/item_embeddings.npy` (precomputed item embeddings for retrieval serving)
 - `artifacts/recommender/item_embedding_index.json` (item-id to embedding-row mapping)
-- `artifacts/recommender/ann_index.bin` (optional ANN index for fast retrieval at larger scale)
+- `artifacts/recommender/ann_index.bin` (required FAISS ANN index for retrieval serving)
 - `artifacts/recommender/topk_recommendations.csv` (user-level candidates for selected model)
 - `artifacts/recommender/output_validation_summary.json`
 - `artifacts/recommender/output_interpretation.md`

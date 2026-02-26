@@ -10,27 +10,24 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction import DictVectorizer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+
+from mle_marketplace_growth.purchase_propensity.helpers.data import _quantile
+from mle_marketplace_growth.purchase_propensity.helpers.metrics import _expected_calibration_error
+from mle_marketplace_growth.purchase_propensity.helpers.modeling import _build_model
 
 FEATURE_KEYS_BY_LOOKBACK = {
     60: ["recency_days", "frequency_30d", "frequency_60d", "monetary_30d", "monetary_60d", "avg_basket_value_60d", "country"],
     90: ["recency_days", "frequency_30d", "frequency_90d", "monetary_30d", "monetary_90d", "avg_basket_value_90d", "country"],
     120: ["recency_days", "frequency_30d", "frequency_120d", "monetary_30d", "monetary_120d", "avg_basket_value_120d", "country"],
 }
+ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
 
 
 # ===== Shared Utilities =====
 def _strict_split_indices(rows: list[dict]) -> tuple[list[int], list[int], list[int], str]:
     unique_dates = sorted({row["as_of_date"] for row in rows})
-    if len(unique_dates) != 12:
-        raise ValueError(
-            "Strict split requires exactly 12 unique as_of_date snapshots "
-            f"(got {len(unique_dates)})."
-        )
+    if len(unique_dates) != 12: raise ValueError("Strict split requires exactly 12 unique as_of_date snapshots " f"(got {len(unique_dates)}).")
     train_dates = set(unique_dates[:10])
     validation_dates = {unique_dates[10]}
     test_dates = {unique_dates[11]}
@@ -49,8 +46,26 @@ def _strict_split_indices(rows: list[dict]) -> tuple[list[int], list[int], list[
 def _load_feature_rows(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
-    if not rows:
-        raise ValueError(f"No rows in feature dataset: {path}")
+    if not rows: raise ValueError(f"No rows in feature dataset: {path}")
+    required_columns = {
+        "user_id",
+        "as_of_date",
+        "country",
+        "recency_days",
+        "frequency_30d",
+        "frequency_60d",
+        "frequency_90d",
+        "frequency_120d",
+        "monetary_30d",
+        "monetary_60d",
+        "monetary_90d",
+        "monetary_120d",
+        "avg_basket_value_60d",
+        "avg_basket_value_90d",
+        "avg_basket_value_120d",
+    }
+    missing = sorted(required_columns - set(rows[0].keys()))
+    if missing: raise ValueError(f"Missing required feature columns for strict window sensitivity: {missing}")
     return [
         {
             "user_id": row["user_id"],
@@ -59,16 +74,16 @@ def _load_feature_rows(path: Path) -> list[dict]:
             "features": {
                 "recency_days": float(row["recency_days"]),
                 "frequency_30d": float(row["frequency_30d"]),
-                "frequency_60d": float(row.get("frequency_60d") or row["frequency_90d"]),
+                "frequency_60d": float(row["frequency_60d"]),
                 "frequency_90d": float(row["frequency_90d"]),
-                "frequency_120d": float(row.get("frequency_120d") or row["frequency_90d"]),
+                "frequency_120d": float(row["frequency_120d"]),
                 "monetary_30d": float(row["monetary_30d"]),
-                "monetary_60d": float(row.get("monetary_60d") or row["monetary_90d"]),
+                "monetary_60d": float(row["monetary_60d"]),
                 "monetary_90d": float(row["monetary_90d"]),
-                "monetary_120d": float(row.get("monetary_120d") or row["monetary_90d"]),
-                "avg_basket_value_60d": float(row.get("avg_basket_value_60d") or row["avg_basket_value_90d"]),
+                "monetary_120d": float(row["monetary_120d"]),
+                "avg_basket_value_60d": float(row["avg_basket_value_60d"]),
                 "avg_basket_value_90d": float(row["avg_basket_value_90d"]),
-                "avg_basket_value_120d": float(row.get("avg_basket_value_120d") or row["avg_basket_value_90d"]),
+                "avg_basket_value_120d": float(row["avg_basket_value_120d"]),
                 "country": row["country"],
             },
         }
@@ -82,10 +97,8 @@ def _load_positive_event_dates(path: Path) -> dict[str, list[date]]:
         events_by_user = {}
         for row in rows:
             user_id = row["user_id"]
-            if not user_id:
-                continue
-            if float(row["quantity"]) <= 0:
-                continue
+            if not user_id: continue
+            if float(row["quantity"]) <= 0: continue
             event_day = date.fromisoformat(row["event_date"])
             events_by_user.setdefault(user_id, []).append(event_day)
     for user_id in events_by_user:
@@ -101,52 +114,129 @@ def _has_purchase_in_window(events: list[date], as_of_day: date, window_days: in
     return 1 if first_idx < len(events) and events[first_idx] <= end_day and events[first_idx] >= start_day else 0
 
 
-def _quantile(values: list[float], q: float) -> float:
-    sorted_values = sorted(values)
-    if not sorted_values:
-        raise ValueError("Cannot compute quantile on empty values.")
-    if q <= 0:
-        return sorted_values[0]
-    if q >= 1:
-        return sorted_values[-1]
-    index = (len(sorted_values) - 1) * q
-    lower = int(index)
-    upper = min(lower + 1, len(sorted_values) - 1)
-    weight = index - lower
-    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
-
-
-def _expected_calibration_error(labels: list[int], scores: list[float], bins: int = 10) -> float:
-    total_rows = len(labels)
-    weighted_gap = 0.0
-    for idx in range(bins):
-        lower = idx / bins
-        upper = (idx + 1) / bins
-        if idx == bins - 1:
-            in_bin = [row_idx for row_idx, value in enumerate(scores) if lower <= value <= upper]
-        else:
-            in_bin = [row_idx for row_idx, value in enumerate(scores) if lower <= value < upper]
-        if not in_bin:
-            continue
-        avg_score = sum(scores[row_idx] for row_idx in in_bin) / len(in_bin)
-        avg_label = sum(labels[row_idx] for row_idx in in_bin) / len(in_bin)
-        weighted_gap += abs(avg_score - avg_label) * (len(in_bin) / total_rows)
-    return float(weighted_gap)
-
-
 def _inter_purchase_gap_days(events_by_user: dict[str, list[date]]) -> list[int]:
     gaps = []
     for events in events_by_user.values():
-        if len(events) < 2:
-            continue
+        if len(events) < 2: continue
         for left, right in zip(events[:-1], events[1:], strict=True):
             gap_days = (right - left).days
-            if gap_days > 0:
-                gaps.append(gap_days)
+            if gap_days > 0: gaps.append(gap_days)
     return gaps
 
 
 # ===== Model Evaluation =====
+# Model evaluation is intentionally split into three steps for readability:
+# 1) build capped train/validation matrices, 2) short-circuit single-class splits,
+# 3) evaluate candidate models and return comparable metrics.
+def _build_split_matrices(
+    rows: list[dict],
+    labels: list[int],
+    train_indices: list[int],
+    validation_indices: list[int],
+    feature_keys: list[str],
+    spend_cap_quantile: float,
+) -> tuple[list[int], list[int], object, object, float]:
+    train_labels = [labels[idx] for idx in train_indices]
+    validation_labels = [labels[idx] for idx in validation_indices]
+
+    vectorizer = DictVectorizer(sparse=True)
+    train_features = [{key: rows[idx]["features"][key] for key in feature_keys} for idx in train_indices]
+    validation_features = [{key: rows[idx]["features"][key] for key in feature_keys} for idx in validation_indices]
+    spend_feature_key = [key for key in feature_keys if key.startswith("monetary_")][-1]
+    spend_cap_value = _quantile([float(features[spend_feature_key]) for features in train_features], spend_cap_quantile)
+    train_features = [{**features, spend_feature_key: min(float(features[spend_feature_key]), spend_cap_value)} for features in train_features]
+    validation_features = [{**features, spend_feature_key: min(float(features[spend_feature_key]), spend_cap_value)} for features in validation_features]
+    return (
+        train_labels,
+        validation_labels,
+        vectorizer.fit_transform(train_features),
+        vectorizer.transform(validation_features),
+        float(spend_cap_value),
+    )
+
+
+def _single_class_results(
+    train_labels: list[int],
+    validation_labels: list[int],
+    train_rows: int,
+    validation_rows: int,
+    spend_cap_value: float,
+    calibration_method: str,
+    feature_keys: list[str],
+) -> list[dict]:
+    reason = "single_class_in_strict_split"
+    train_rate = round(sum(train_labels) / len(train_labels), 6)
+    validation_rate = round(sum(validation_labels) / len(validation_labels), 6)
+    shared = {
+        "roc_auc": 0.0,
+        "average_precision": 0.0,
+        "top_decile_lift": 0.0,
+        "brier_score": 1.0,
+        "ece_10_bin": 1.0,
+        "train_rows": train_rows,
+        "validation_rows": validation_rows,
+        "positive_rate_train": train_rate,
+        "positive_rate_validation": validation_rate,
+        "spend_cap_value": round(float(spend_cap_value), 6),
+        "calibration_method": calibration_method,
+        "feature_keys_used": feature_keys,
+        "status": reason,
+    }
+    return [
+        {
+            "model_name": model_name,
+            **shared,
+        }
+        for model_name in ["logistic_regression", "xgboost"]
+    ]
+
+
+def _evaluate_candidate_models(
+    train_matrix,
+    validation_matrix,
+    train_labels: list[int],
+    validation_labels: list[int],
+    train_rows: int,
+    validation_rows: int,
+    spend_cap_value: float,
+    calibration_method: str,
+    feature_keys: list[str],
+) -> list[dict]:
+    results = []
+    train_rate = round(sum(train_labels) / len(train_labels), 6)
+    validation_rate = round(sum(validation_labels) / len(validation_labels), 6)
+    base_positive_rate = sum(validation_labels) / len(validation_labels)
+    top_decile_count = max(1, int(0.1 * len(validation_labels)))
+    shared = {
+        "train_rows": train_rows,
+        "validation_rows": validation_rows,
+        "positive_rate_train": train_rate,
+        "positive_rate_validation": validation_rate,
+        "spend_cap_value": round(float(spend_cap_value), 6),
+        "calibration_method": calibration_method,
+        "feature_keys_used": feature_keys,
+    }
+    for model_name in ["logistic_regression", "xgboost"]:
+        model = _build_model(model_name)
+        calibrated_model = CalibratedClassifierCV(estimator=model, method=calibration_method, cv=3) if calibration_method != "none" else model
+        calibrated_model.fit(train_matrix, train_labels)
+        scores = calibrated_model.predict_proba(validation_matrix)[:, 1]
+        top_decile_indices = sorted(range(len(scores)), key=lambda idx: scores[idx], reverse=True)[:top_decile_count]
+        top_decile_positive_rate = sum(validation_labels[idx] for idx in top_decile_indices) / top_decile_count
+        results.append(
+            {
+                "model_name": model_name,
+                "roc_auc": round(float(roc_auc_score(validation_labels, scores)), 6),
+                "average_precision": round(float(average_precision_score(validation_labels, scores)), 6),
+                "top_decile_lift": round(float(top_decile_positive_rate / base_positive_rate if base_positive_rate > 0 else 0.0), 6),
+                "brier_score": round(float(brier_score_loss(validation_labels, scores)), 6),
+                "ece_10_bin": round(_expected_calibration_error(validation_labels, scores.tolist(), bins=10), 6),
+                **shared,
+            }
+        )
+    return results
+
+
 def _evaluate_models(
     rows: list[dict],
     labels: list[int],
@@ -156,108 +246,36 @@ def _evaluate_models(
     calibration_method: str,
     feature_keys: list[str],
 ) -> tuple[str, list[dict]]:
-    if not train_indices or not validation_indices:
-        raise ValueError("Empty train/validation split for strict 10/1/1 chronology.")
-
-    train_labels = [labels[idx] for idx in train_indices]
-    validation_labels = [labels[idx] for idx in validation_indices]
-
-    vectorizer = DictVectorizer(sparse=True)
-    train_features = [{key: rows[idx]["features"][key] for key in feature_keys} for idx in train_indices]
-    validation_features = [{key: rows[idx]["features"][key] for key in feature_keys} for idx in validation_indices]
-    spend_feature_key = [key for key in feature_keys if key.startswith("monetary_")][-1]
-    spend_cap_value = _quantile([float(features[spend_feature_key]) for features in train_features], spend_cap_quantile)
-    train_features = [
-        {**features, spend_feature_key: min(float(features[spend_feature_key]), spend_cap_value)}
-        for features in train_features
-    ]
-    validation_features = [
-        {**features, spend_feature_key: min(float(features[spend_feature_key]), spend_cap_value)}
-        for features in validation_features
-    ]
-    train_matrix = vectorizer.fit_transform(train_features)
-    validation_matrix = vectorizer.transform(validation_features)
-
+    if not train_indices or not validation_indices: raise ValueError("Empty train/validation split for strict 10/1/1 chronology.")
+    train_labels, validation_labels, train_matrix, validation_matrix, spend_cap_value = _build_split_matrices(
+        rows=rows,
+        labels=labels,
+        train_indices=train_indices,
+        validation_indices=validation_indices,
+        feature_keys=feature_keys,
+        spend_cap_quantile=spend_cap_quantile,
+    )
     if len(set(train_labels)) < 2 or len(set(validation_labels)) < 2:
-        reason = "single_class_in_strict_split"
-        unavailable = []
-        for model_name in ["logistic_regression", "xgboost"]:
-            unavailable.append(
-                {
-                    "model_name": model_name,
-                    "roc_auc": 0.0,
-                    "average_precision": 0.0,
-                    "top_decile_lift": 0.0,
-                    "brier_score": 1.0,
-                    "ece_10_bin": 1.0,
-                    "train_rows": len(train_indices),
-                    "validation_rows": len(validation_indices),
-                    "positive_rate_train": round(sum(train_labels) / len(train_labels), 6),
-                    "positive_rate_validation": round(sum(validation_labels) / len(validation_labels), 6),
-                    "spend_cap_value": round(float(spend_cap_value), 6),
-                    "calibration_method": calibration_method,
-                    "feature_keys_used": feature_keys,
-                    "status": reason,
-                }
-            )
-        return "unavailable", unavailable
-
-    model_candidates = [
-        (
-            "logistic_regression",
-            make_pipeline(
-                StandardScaler(with_mean=False),
-                LogisticRegression(max_iter=2000, class_weight="balanced", random_state=42),
-            ),
-        ),
-        (
-            "xgboost",
-            XGBClassifier(
-                n_estimators=300,
-                max_depth=4,
-                learning_rate=0.05,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                objective="binary:logistic",
-                eval_metric="logloss",
-                random_state=42,
-            ),
-        ),
-    ]
-
-    results = []
-    for model_name, model in model_candidates:
-        calibrated_model = model
-        if calibration_method != "none":
-            calibrated_model = CalibratedClassifierCV(
-                estimator=model,
-                method=calibration_method,
-                cv=3,
-            )
-        calibrated_model.fit(train_matrix, train_labels)
-        scores = calibrated_model.predict_proba(validation_matrix)[:, 1]
-        base_positive_rate = sum(validation_labels) / len(validation_labels)
-        top_decile_count = max(1, int(0.1 * len(validation_labels)))
-        top_decile_indices = sorted(range(len(scores)), key=lambda idx: scores[idx], reverse=True)[:top_decile_count]
-        top_decile_positive_rate = sum(validation_labels[idx] for idx in top_decile_indices) / top_decile_count
-        top_decile_lift = top_decile_positive_rate / base_positive_rate if base_positive_rate > 0 else 0.0
-        results.append(
-            {
-                "model_name": model_name,
-                "roc_auc": round(float(roc_auc_score(validation_labels, scores)), 6),
-                "average_precision": round(float(average_precision_score(validation_labels, scores)), 6),
-                "top_decile_lift": round(float(top_decile_lift), 6),
-                "brier_score": round(float(brier_score_loss(validation_labels, scores)), 6),
-                "ece_10_bin": round(_expected_calibration_error(validation_labels, scores.tolist(), bins=10), 6),
-                "train_rows": len(train_indices),
-                "validation_rows": len(validation_indices),
-                "positive_rate_train": round(sum(train_labels) / len(train_labels), 6),
-                "positive_rate_validation": round(sum(validation_labels) / len(validation_labels), 6),
-                "spend_cap_value": round(float(spend_cap_value), 6),
-                "calibration_method": calibration_method,
-                "feature_keys_used": feature_keys,
-            }
+        return "unavailable", _single_class_results(
+            train_labels=train_labels,
+            validation_labels=validation_labels,
+            train_rows=len(train_indices),
+            validation_rows=len(validation_indices),
+            spend_cap_value=spend_cap_value,
+            calibration_method=calibration_method,
+            feature_keys=feature_keys,
         )
+    results = _evaluate_candidate_models(
+        train_matrix=train_matrix,
+        validation_matrix=validation_matrix,
+        train_labels=train_labels,
+        validation_labels=validation_labels,
+        train_rows=len(train_indices),
+        validation_rows=len(validation_indices),
+        spend_cap_value=spend_cap_value,
+        calibration_method=calibration_method,
+        feature_keys=feature_keys,
+    )
     best_model = max(results, key=lambda row: row["average_precision"])["model_name"]
     return best_model, results
 
@@ -266,8 +284,7 @@ def _evaluate_models(
 def _write_validation_dashboard(output: dict, output_path: Path) -> None:
     prediction_rows = output.get("window_sensitivity", [])
     lookback_rows = output.get("feature_window_validation", [])
-    if not prediction_rows or not lookback_rows:
-        return
+    if not prediction_rows or not lookback_rows: return
 
     window_axis = [row["window_days"] for row in prediction_rows]
     best_window_metrics = [
@@ -300,11 +317,6 @@ def _write_validation_dashboard(output: dict, output_path: Path) -> None:
     print(f"Wrote window validation dashboard: {output_path}")
 
 
-def _best_model_by_ap(model_results: list[dict]) -> tuple[str, float]:
-    best = max(model_results, key=lambda row: float(row.get("average_precision", 0.0)))
-    return str(best["model_name"]), float(best["average_precision"])
-
-
 # ===== Entry Point =====
 def main() -> None:
     # ===== CLI Arguments =====
@@ -324,43 +336,39 @@ def main() -> None:
     args = parser.parse_args()
 
     # ===== Input Checks =====
-    if not 0.0 < args.spend_cap_quantile <= 1.0:
-        raise ValueError("--spend-cap-quantile must be in (0, 1]")
+    if not 0.0 < args.spend_cap_quantile <= 1.0: raise ValueError("--spend-cap-quantile must be in (0, 1]")
 
     feature_path = Path(args.input_csv)
     events_path = Path(args.events_csv)
-    if not feature_path.exists():
-        raise FileNotFoundError(f"Input CSV not found: {feature_path}")
-    if not events_path.exists():
-        raise FileNotFoundError(f"Events CSV not found: {events_path}")
+    if not feature_path.exists(): raise FileNotFoundError(f"Input CSV not found: {feature_path}")
+    if not events_path.exists(): raise FileNotFoundError(f"Events CSV not found: {events_path}")
 
     windows = sorted({int(value.strip()) for value in args.windows.split(",") if value.strip()})
-    if not windows:
-        raise ValueError("No windows provided.")
+    if not windows: raise ValueError("No windows provided.")
+    if set(windows) != ALLOWED_PREDICTION_WINDOWS:
+        raise ValueError("--windows must be exactly 30,60,90 for strict architecture alignment.")
 
     # ===== Load Data =====
     rows = _load_feature_rows(feature_path)
     with feature_path.open("r", encoding="utf-8", newline="") as file:
         raw_rows = list(csv.DictReader(file))
+    if not raw_rows: raise ValueError(f"No rows in feature dataset: {feature_path}")
+
+    # ===== Split + Label Schema Checks =====
     train_indices, validation_indices, _, split_description = _strict_split_indices(rows)
     events_by_user = _load_positive_event_dates(events_path)
     inter_purchase_gap_days = _inter_purchase_gap_days(events_by_user)
+    required_label_columns = [f"label_purchase_{window_days}d" for window_days in windows]
+    missing_labels = [column for column in required_label_columns if column not in raw_rows[0]]
+    if missing_labels: raise ValueError(f"Missing required label columns for strict window sensitivity: {missing_labels}")
 
-    # ===== Prediction-Window Evaluation =====
+    # ===== Prediction-Window Model Evaluation =====
     labels_by_window = {}
     sensitivity_rows = []
     for window_days in windows:
         label_col = f"label_purchase_{window_days}d"
-        labels = None
-        if raw_rows and label_col in raw_rows[0]:
-            labels = [int(float(row[label_col])) for row in raw_rows]
-        if labels is None:
-            labels = []
-            for row in rows:
-                events = events_by_user.get(row["user_id"], [])
-                labels.append(_has_purchase_in_window(events, row["as_of_date_obj"], window_days))
-        if sum(labels) == 0:
-            raise ValueError(f"No positive labels for window={window_days}.")
+        labels = [int(float(row[label_col])) for row in raw_rows]
+        if sum(labels) == 0: raise ValueError(f"No positive labels for window={window_days}.")
         labels_by_window[window_days] = labels
 
         best_model, model_results = _evaluate_models(
@@ -380,7 +388,7 @@ def main() -> None:
             }
         )
 
-    # ===== Window Coverage Check =====
+    # ===== Prediction-Window Coverage Diagnostics =====
     prediction_window_validation = []
     if inter_purchase_gap_days:
         for window_days in windows:
@@ -392,7 +400,7 @@ def main() -> None:
                 }
             )
 
-    # ===== Feature-Lookback Evaluation =====
+    # ===== Feature-Lookback Model Evaluation =====
     feature_window_validation = []
     prediction_window_for_feature_eval = 30 if 30 in labels_by_window else windows[0]
     for lookback_days in [60, 90, 120]:
@@ -415,7 +423,7 @@ def main() -> None:
             }
         )
 
-    # ===== Write Outputs =====
+    # ===== Freeze Decision + Output Write =====
     best_prediction_window = max(
         sensitivity_rows,
         key=lambda row: max(item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])),
@@ -424,8 +432,12 @@ def main() -> None:
         feature_window_validation,
         key=lambda row: max(item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])),
     )
-    best_prediction_model_name, best_prediction_model_ap = _best_model_by_ap(best_prediction_window["model_results"])
-    best_lookback_model_name, best_lookback_model_ap = _best_model_by_ap(best_lookback_window["model_results"])
+    best_prediction_model = max(best_prediction_window["model_results"], key=lambda row: float(row.get("average_precision", 0.0)))
+    best_lookback_model = max(best_lookback_window["model_results"], key=lambda row: float(row.get("average_precision", 0.0)))
+    best_prediction_model_name, best_prediction_model_ap = str(best_prediction_model["model_name"]), float(best_prediction_model["average_precision"])
+    best_lookback_model_name, best_lookback_model_ap = str(best_lookback_model["model_name"]), float(best_lookback_model["average_precision"])
+    # Freeze structural decisions from validation so downstream train/predict/eval
+    # uses one fixed configuration for the demo cycle.
     freeze_decision = {
         "selected_prediction_window_days": int(best_prediction_window["window_days"]),
         "selected_feature_lookback_days": int(best_lookback_window["feature_lookback_days"]),

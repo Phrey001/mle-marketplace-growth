@@ -5,28 +5,25 @@ import json
 from pathlib import Path
 
 
-# ===== Artifact Loaders =====
-def _load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"Required artifact not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-# ===== Validation Checks =====
 def run_validation(
     artifacts_dir: Path,
     expect_window_sensitivity: bool,
     output_json: Path | None = None,
 ) -> tuple[bool, dict]:
-    # Load required artifacts.
-    train_metrics = _load_json(artifacts_dir / "train_metrics.json")
-    budget_eval_test_path = artifacts_dir / "offline_policy_budget_test.json"
-    budget_eval_validation_path = artifacts_dir / "offline_policy_budget_validation.json"
-    budget_eval_test = _load_json(budget_eval_test_path)
+    train_metrics_path, budget_eval_test_path, budget_eval_validation_path = (
+        artifacts_dir / "train_metrics.json",
+        artifacts_dir / "offline_policy_budget_test.json",
+        artifacts_dir / "offline_policy_budget_validation.json",
+    )
+    for path in (train_metrics_path, budget_eval_test_path, budget_eval_validation_path):
+        if not path.exists(): raise FileNotFoundError(f"Required artifact not found: {path}")
+    train_metrics, budget_eval_test = (
+        json.loads(train_metrics_path.read_text(encoding="utf-8")),
+        json.loads(budget_eval_test_path.read_text(encoding="utf-8")),
+    )
 
     checks: list[dict] = []
 
-    # Model and metric consistency checks.
     selected_model_name = train_metrics.get("selected_model_name")
     checks.append(
         {
@@ -38,15 +35,14 @@ def run_validation(
     )
 
     candidate_metrics = train_metrics.get("propensity_model_candidates", [])
-    candidate_bounds_ok = all(
-        0.0 <= float(row.get("roc_auc", -1.0)) <= 1.0 and 0.0 <= float(row.get("average_precision", -1.0)) <= 1.0
-        for row in candidate_metrics
-    )
     checks.append(
         {
             "check": "candidate_metrics_in_bounds",
             "description": "Model metrics should be valid probabilities in [0, 1].",
-            "passed": candidate_bounds_ok,
+            "passed": all(
+                0.0 <= float(row.get("roc_auc", -1.0)) <= 1.0 and 0.0 <= float(row.get("average_precision", -1.0)) <= 1.0
+                for row in candidate_metrics
+            ),
             "detail": f"candidate_count={len(candidate_metrics)}",
         }
     )
@@ -62,7 +58,7 @@ def run_validation(
             "detail": f"ml={ml_revenue:.6f}, random={random_revenue:.6f}",
         }
     )
-    budget_eval_validation = _load_json(budget_eval_validation_path)
+    budget_eval_validation = json.loads(budget_eval_validation_path.read_text(encoding="utf-8"))
     checks.append(
         {
             "check": "budget_policy_validation_and_test_outputs_present",
@@ -86,10 +82,10 @@ def run_validation(
         }
     )
 
-    # Optional sensitivity artifact checks.
     sensitivity_path = artifacts_dir / "window_sensitivity.json"
     if expect_window_sensitivity:
-        sensitivity = _load_json(sensitivity_path)
+        if not sensitivity_path.exists(): raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
+        sensitivity = json.loads(sensitivity_path.read_text(encoding="utf-8"))
         windows = [int(row.get("window_days", -1)) for row in sensitivity.get("window_sensitivity", [])]
         checks.append(
             {
@@ -103,7 +99,6 @@ def run_validation(
     passed = all(row["passed"] for row in checks)
     summary = {"passed": passed, "artifacts_dir": str(artifacts_dir), "checks": checks}
 
-    # Optional summary output.
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -111,14 +106,16 @@ def run_validation(
     return passed, summary
 
 
-# ===== Automated Interpretation =====
 def write_interpretation(
     artifacts_dir: Path,
     output_md: Path | None = None,
+    expect_window_sensitivity: bool = False,
 ) -> Path:
-    train_metrics = _load_json(artifacts_dir / "train_metrics.json")
-    budget_eval_test = _load_json(artifacts_dir / "offline_policy_budget_test.json")
-    budget_eval_validation = _load_json(artifacts_dir / "offline_policy_budget_validation.json")
+    train_metrics, budget_eval_test, budget_eval_validation = (
+        json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8")),
+        json.loads((artifacts_dir / "offline_policy_budget_test.json").read_text(encoding="utf-8")),
+        json.loads((artifacts_dir / "offline_policy_budget_validation.json").read_text(encoding="utf-8")),
+    )
 
     validation_quality = train_metrics.get("validation_quality", {})
     top_lift = float(validation_quality.get("top_decile_lift", 0.0))
@@ -129,20 +126,20 @@ def write_interpretation(
 
     policies = {row["policy"]: row for row in budget_eval_test.get("policy_comparison", [])}
     policies_validation = {row["policy"]: row for row in budget_eval_validation.get("policy_comparison", [])}
-    ml_rev = float(policies.get("ml_top_expected_value", {}).get("actual_revenue_per_targeted_user", 0.0))
-    random_rev = float(policies.get("random_baseline", {}).get("actual_revenue_per_targeted_user", 0.0))
-    rfm_rev = float(policies.get("rfm_heuristic", {}).get("actual_revenue_per_targeted_user", 0.0))
+    ml_rev, random_rev, rfm_rev = (
+        float(policies.get("ml_top_expected_value", {}).get("actual_revenue_per_targeted_user", 0.0)),
+        float(policies.get("random_baseline", {}).get("actual_revenue_per_targeted_user", 0.0)),
+        float(policies.get("rfm_heuristic", {}).get("actual_revenue_per_targeted_user", 0.0)),
+    )
 
-    window_summary = "Window sensitivity not available."
-    sensitivity_path = artifacts_dir / "window_sensitivity.json"
-    if sensitivity_path.exists():
-        sensitivity = _load_json(sensitivity_path)
+    window_summary = "Window sensitivity not run in fixed mode."
+    if expect_window_sensitivity:
+        sensitivity_path = artifacts_dir / "window_sensitivity.json"
+        if not sensitivity_path.exists(): raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
+        sensitivity = json.loads(sensitivity_path.read_text(encoding="utf-8"))
         window_rows = sensitivity.get("window_sensitivity", [])
         if window_rows:
-            best_window = max(
-                window_rows,
-                key=lambda row: max(item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])),
-            )
+            best_window = max(window_rows, key=lambda row: max(item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])))
             best_window_ap = max(item["average_precision"] for item in best_window.get("model_results", []))
             window_summary = (
                 f"Best prediction window by PR-AUC: {best_window['window_days']}d "
@@ -187,22 +184,19 @@ def write_interpretation(
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
 
-
-# ===== Entry Point =====
 def main() -> None:
-    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Validate generated purchase propensity artifacts.")
     parser.add_argument("--artifacts-dir", default="artifacts/purchase_propensity", help="Directory containing generated artifacts")
     parser.add_argument("--output-json", default="artifacts/purchase_propensity/output_validation_summary.json", help="Where to write output-validation summary JSON")
     parser.add_argument("--expect-window-sensitivity", action="store_true", help="Require window_sensitivity.json with 30/60/90 windows")
     args = parser.parse_args()
 
-    # ===== Validate + Write Interpretation =====
     passed, summary = run_validation(artifacts_dir=Path(args.artifacts_dir), expect_window_sensitivity=args.expect_window_sensitivity, output_json=Path(args.output_json))
-    if not passed:
-        failed = [row for row in summary["checks"] if not row["passed"]]
-        raise SystemExit(f"Validation failed: {failed}")
-    interpretation_path = write_interpretation(artifacts_dir=Path(args.artifacts_dir))
+    if not passed: raise SystemExit(f"Validation failed: {[row for row in summary['checks'] if not row['passed']]}")
+    interpretation_path = write_interpretation(
+        artifacts_dir=Path(args.artifacts_dir),
+        expect_window_sensitivity=args.expect_window_sensitivity,
+    )
     print(f"Wrote interpretation: {interpretation_path}")
     print(f"Validation passed: {args.output_json}")
 
