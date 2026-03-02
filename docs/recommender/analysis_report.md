@@ -2,16 +2,18 @@
 
 ## Report Metadata
 
-- Artifact source: `artifacts/recommender/`
-- Run scope: single-cycle recommender demo from the recommended quickstart flow
-- Update policy: update this report (or append a new version) after reruns with material result changes
+- **Artifact source:** `artifacts/recommender/`
+- **Run scope:** single-cycle recommender demo from the recommended quickstart flow
+- **Update policy:** update this report (or append a new version) after reruns with material result changes
 
 ## 1) Executive Summary
 
-- Run health: all automated validation checks passed.
-- Selected model: `mf` (selection rule: maximize validation `Recall@20`).
-- Business takeaway: use MF as current retrieval default; keep popularity as baseline and keep two-tower as challenger for future iteration.
-- Scope: offline ranking quality only (not causal commercial lift).
+- **Operational call to action:** keep `mf` as the current retrieval default, retain `popularity` as sanity baseline, and continue tuning `two_tower` as the challenger model.
+- **Two-tower Challenger Path (out of current scope):** prioritize richer user/item features in the feature store (for example RFM-style user behavior signals and item metadata features), as the most practical next step to close the gap vs MF.
+- **Run health:** all automated validation checks passed.
+- **Selected model:** `mf` (selection rule: maximize validation `Recall@20`).
+- **Business takeaway:** MF is currently strongest on offline retrieval quality; two-tower is improving but not yet the default.
+- **Scope:** offline ranking quality only (not causal commercial lift).
 
 ## 2) Evaluation Setup
 
@@ -52,12 +54,12 @@ How to read model comparison:
 |---|---:|---:|---:|---:|---:|---:|
 | popularity | 0.036948 | 0.017600 | 0.036948 | 0.056382 | 0.022610 | 0.056382 |
 | mf | 0.083013 | 0.044036 | 0.083013 | 0.125000 | 0.054625 | 0.125000 |
-| two_tower | 0.065259 | 0.035817 | 0.065259 | 0.095010 | 0.043277 | 0.095010 |
+| two_tower | 0.067658 | 0.036133 | 0.067658 | 0.099568 | 0.044201 | 0.099568 |
 
 Validation readout (Recall@20):
 - `mf` wins (`0.125000`)
 - vs `popularity`: `+0.068618`
-- vs `two_tower`: `+0.029990`
+- vs `two_tower`: `+0.025432`
 
 ### Test
 
@@ -65,12 +67,12 @@ Validation readout (Recall@20):
 |---|---:|---:|---:|---:|---:|---:|
 | popularity | 0.049916 | 0.024529 | 0.049916 | 0.067195 | 0.029049 | 0.067195 |
 | mf | 0.064795 | 0.033182 | 0.064795 | 0.095512 | 0.040882 | 0.095512 |
-| two_tower | 0.045116 | 0.023214 | 0.045116 | 0.072474 | 0.030112 | 0.072474 |
+| two_tower | 0.045356 | 0.022635 | 0.045356 | 0.072714 | 0.029535 | 0.072714 |
 
 Test readout (Recall@20):
 - `mf` remains best (`0.095512`)
 - vs `popularity`: `+0.028317`
-- vs `two_tower`: `+0.023038`
+- vs `two_tower`: `+0.022798`
 
 ## 4) Serving Outputs and Artifact Health
 

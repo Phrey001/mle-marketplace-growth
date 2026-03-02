@@ -10,12 +10,12 @@
 - Random Recall@20 anchor (K/N): 0.005488
 
 ## Validation Snapshot
-- Two-tower Recall@20: 0.0974 (lift vs random anchor: 17.75x)
+- Two-tower Recall@20: 0.0996 (lift vs random anchor: 18.14x)
 - MF Recall@20: 0.1250 (lift vs random anchor: 22.77x)
 - Popularity Recall@20: 0.0564 (lift vs random anchor: 10.27x)
 
 ## Test Snapshot
-- Two-tower Recall@20: 0.0713 (lift vs random anchor: 12.99x)
+- Two-tower Recall@20: 0.0727 (lift vs random anchor: 13.25x)
 - MF Recall@20: 0.0955 (lift vs random anchor: 17.40x)
 - Popularity Recall@20: 0.0672 (lift vs random anchor: 12.24x)
 

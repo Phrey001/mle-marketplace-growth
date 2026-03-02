@@ -28,12 +28,12 @@
       "model_name": "two_tower",
       "eligible_users": 4168,
       "metrics": {
-        "Recall@10": 0.070537,
-        "NDCG@10": 0.038892,
-        "HitRate@10": 0.070537,
-        "Recall@20": 0.101008,
-        "NDCG@20": 0.046538,
-        "HitRate@20": 0.101008
+        "Recall@10": 0.074616,
+        "NDCG@10": 0.040334,
+        "HitRate@10": 0.074616,
+        "Recall@20": 0.101248,
+        "NDCG@20": 0.047046,
+        "HitRate@20": 0.101248
       }
     }
   ],

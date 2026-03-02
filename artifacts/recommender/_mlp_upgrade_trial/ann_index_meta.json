@@ -1,7 +1,0 @@
-{
-  "backend": "faiss_hnsw_ip",
-  "metric": "inner_product",
-  "dimension": 64,
-  "item_count": 3644,
-  "notes": "ANN retrieval enabled via FAISS HNSW index."
-}
