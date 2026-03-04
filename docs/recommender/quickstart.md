@@ -7,12 +7,13 @@ Datetime/global-vs-engine config strategy is documented in `docs/README.md`.
 ## Optional Tuning Sweep
 
 Sweep scope (small fixed grid):
-- two-tower: `temperature`, `negative_samples`, `batch_size`, `early_stop_tolerance`
-- all other knobs are inherited from `configs/recommender/default.yaml`
-- `trial_default` is always run first using the current YAML values before grid variants
-- tuning summary reports both:
-  - overall best trial by selected-model `Recall@20`
-  - best two-tower trial by `two_tower` validation `Recall@20`
+
+| Item | Behavior |
+|---|---|
+| Swept knobs | two-tower: `temperature`, `negative_samples`, `batch_size`, `early_stop_tolerance` |
+| Non-swept knobs | inherited from `configs/recommender/default.yaml` |
+| Baseline trial | `trial_default` runs first using current YAML values |
+| Tuning summary | reports overall best trial by selected-model `Recall@20` and best two-tower trial by two-tower validation `Recall@20` |
 
 ```bash
 # Shared layer (run once; reuse across engines)
@@ -49,25 +50,28 @@ This runs:
 
 ## Key Config Params
 
-- `split_version`: split strategy ID (tracks which train/val/test split rule was used).
-- `embedding_dim`, `epochs`, `learning_rate`, `negative_samples`, `batch_size`, `l2_reg`, `max_grad_norm`: two-tower training knobs.
-- `early_stop_rounds`, `early_stop_metric`, `early_stop_k`, `early_stop_tolerance`: two-tower convergence knobs.
-- `temperature`, `normalize_embeddings`: two-tower scoring/stability knobs.
-- `tower_hidden_dim`, `tower_dropout`: optional minimal MLP tower depth/regularization (`tower_hidden_dim=0` disables MLP towers).
-- `device`: two-tower training device mode (`auto` only: uses `cuda` when available, else `cpu`).
-- `mf_components`, `mf_n_iter`, `mf_weighting`, `mf_algorithm`, `mf_tol`: MF baseline/convergence knobs.
-- `popularity_transform`: popularity baseline scoring transform.
-- `top_k`: number of candidates written per user in serving output (`topk_recommendations.csv`).
-- `top_ks`: metric cutoffs used in offline evaluation (for example `10,20` computes Recall/NDCG/HitRate at K=10 and K=20).
+| Group | Params |
+|---|---|
+| Split/versioning | `split_version` |
+| Two-tower training | `embedding_dim`, `epochs`, `learning_rate`, `negative_samples`, `batch_size`, `l2_reg`, `max_grad_norm` |
+| Two-tower convergence | `early_stop_rounds`, `early_stop_metric`, `early_stop_k`, `early_stop_tolerance` |
+| Two-tower scoring/stability | `temperature`, `normalize_embeddings` |
+| Optional tower depth | `tower_hidden_dim`, `tower_dropout` (`tower_hidden_dim=0` disables MLP towers) |
+| Device | `device` (`auto` only: uses `cuda` when available, else `cpu`) |
+| MF baseline | `mf_components`, `mf_n_iter`, `mf_weighting`, `mf_algorithm`, `mf_tol` |
+| Popularity baseline | `popularity_transform` |
+| Serving output | `top_k` (candidates written per user) |
+| Offline eval cutoffs | `top_ks` (for example `10,20` computes Recall/NDCG/HitRate at K=10 and K=20) |
 
 ## Outputs To Review
 
-- `artifacts/recommender/output_validation_summary.json`
-- `artifacts/recommender/output_interpretation.md`
-- `artifacts/recommender/validation_retrieval_metrics.json`
-- `artifacts/recommender/test_retrieval_metrics.json`
-- `artifacts/recommender/topk_recommendations.csv`
-- `docs/recommender/analysis_report.md` (manual update after rerun)
+| Priority | Artifact(s) | Why |
+|---|---|---|
+| Must | `artifacts/recommender/output_validation_summary.json` | Confirms artifact contract and health checks |
+| Must | `artifacts/recommender/output_interpretation.md` | Fast narrative summary of run outcomes |
+| Must | `artifacts/recommender/validation_retrieval_metrics.json`, `artifacts/recommender/test_retrieval_metrics.json` | Core retrieval quality evidence |
+| Must | `artifacts/recommender/topk_recommendations.csv` | Serving-style top-K output |
+| Must (manual) | `docs/recommender/analysis_report.md` | Refresh report after rerun |
 
 ## Tests
 

@@ -1,6 +1,4 @@
-train_start_date: "2010-12-09" # rolling retrain cycle start (monthly snapshots)
-train_end_date: "2011-11-09" # rolling retrain cycle end (12 snapshots total)
-score_as_of_date: "2011-11-09" # cycle score/evaluation snapshot
+panel_end_date: "2011-02-01" # rolling retrain anchor (+3 months vs initial cycle end); pipeline derives overlapping 11 prior months + this month (12 total)
 window_selection_mode: "fixed" # keep structural decisions fixed; no reopen of structural search
 prediction_window_days: 90 # use frozen value selected in initial-cycle sensitivity
 feature_lookback_days: 120 # use frozen value selected in initial-cycle sensitivity

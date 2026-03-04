@@ -44,7 +44,9 @@ Benchmark note:
 
 How to read model comparison:
 - All three models are tested on the same users and same split.
-- `Recall@20` is the primary selection metric here.
+- `Recall@K` (Item Coverage): % of relevant items retrieved in top-K (primary selection uses `Recall@20`).
+- `NDCG@K`(Item Relevance):: position-aware ranking quality in top-K.
+- `HitRate@K` (Forgiving Item Coverage): % of users >= 1 relevant item in top-K (coverage-sanity guardrail).
 - Higher metric values are better.
 - The selected model is the one with highest validation `Recall@20`.
 
@@ -74,6 +76,14 @@ Test readout (Recall@20):
 - vs `popularity`: `+0.028317`
 - vs `two_tower`: `+0.022798`
 
+Metric consistency check:
+- Secondary metrics (NDCG, HitRate) show no conflict with primary `Recall@20` selection.
+- Supporting evidence (test):
+  - `Recall@20`: `mf 0.095512 > two_tower 0.072714 > popularity 0.067195`
+  - `NDCG@20`: `mf 0.040882 > two_tower 0.029535 > popularity 0.029049`
+  - `HitRate@20`: `mf 0.095512 > two_tower 0.072714 > popularity 0.067195`
+- Interpretation: model ordering is directionally consistent across primary and guardrail metrics, so selecting `mf` by validation `Recall@20` is stable under offline evaluation.
+
 ## 4) Serving Outputs and Artifact Health
 
 Key outputs present:
@@ -98,9 +108,7 @@ Validation summary status:
 - Keep quickstart workflow as source-of-truth reproducibility path.
 - Two-tower experimentation: model depth was increased experimentally (one hidden layer per tower + ReLU + dropout + L2 normalization), but empirical gains were not sufficient to justify added complexity; keep embedding-only towers as default.
 
-## 6) Plots (Need vs Optional)
-
-- Required for this portfolio demo: none.
-- Optional (useful, low-bloat): one model comparison bar chart for `Recall@20` (validation and test) across `popularity`, `mf`, `two_tower`.
+## 6) Plots (Optional)
+One model comparison bar chart for `Recall@20` (validation and test) across `popularity`, `mf`, `two_tower`.
 
 ![Recommender Recall@20 Comparison](../../artifacts/recommender/report_assets/model_recall_at20_comparison.png)

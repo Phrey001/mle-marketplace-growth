@@ -1,18 +1,18 @@
 # Automated Interpretation
 
 ## Model Generalization
-- ROC-AUC: 0.7829
-- PR-AUC: 0.6964
-- Top-decile lift: 2.2938
-- Calibration (ECE, lower is better): 0.0440
-- Calibration (Brier, lower is better): 0.1807
+- ROC-AUC: 0.7671
+- PR-AUC: 0.6578
+- Top-decile lift: 2.5299
+- Calibration (ECE, lower is better): 0.1518
+- Calibration (Brier, lower is better): 0.1955
 
 ## Policy Comparison (Budget-Constrained Holdout Outcomes)
-- ML expected-value revenue/targeted user: 743.7414
-- Random baseline revenue/targeted user: 232.7335
-- RFM baseline revenue/targeted user: 744.1167
-- ML vs Random delta: 511.0078
-- ML vs RFM delta: -0.3754
+- ML expected-value revenue/targeted user: 949.4684
+- Random baseline revenue/targeted user: 307.6575
+- RFM baseline revenue/targeted user: 949.3128
+- ML vs Random delta: 641.8109
+- ML vs RFM delta: 0.1556
 - Validation policy rows: 3
 - Test policy rows: 3
 

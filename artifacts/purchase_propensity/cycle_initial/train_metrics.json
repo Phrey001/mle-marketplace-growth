@@ -4,83 +4,83 @@
   "revenue_backtest_label": "label_net_revenue_90d",
   "prediction_window_days": 90,
   "feature_lookback_days": 120,
-  "validation_split_description": "out_of_time_10_1_1_train_dates=['2009-12-09', '2010-01-09', '2010-02-09', '2010-03-09', '2010-04-09', '2010-05-09', '2010-06-09', '2010-07-09', '2010-08-09', '2010-09-09'];validation_dates=['2010-10-09'];test_dates=['2010-11-09']",
+  "validation_split_description": "out_of_time_10_1_1_train_dates=['2009-12-01', '2010-01-01', '2010-02-01', '2010-03-01', '2010-04-01', '2010-05-01', '2010-06-01', '2010-07-01', '2010-08-01', '2010-09-01'];validation_dates=['2010-10-01'];test_dates=['2010-11-01']",
   "spend_cap_quantile": 0.99,
-  "spend_cap_value": 8413.526,
+  "spend_cap_value": 8796.878,
   "calibration_method": "sigmoid",
   "revenue_model_name": "xgboost_regressor_conditional_revenue",
-  "revenue_fallback_value": 1222.495345,
-  "train_rows": 22921,
-  "validation_rows": 3744,
-  "test_rows": 4111,
+  "revenue_fallback_value": 1217.243743,
+  "train_rows": 21721,
+  "validation_rows": 3649,
+  "test_rows": 4022,
   "selected_model_name": "xgboost",
   "selected_propensity_model_name": "xgboost",
   "selected_revenue_model_name": "xgboost_regressor_conditional_revenue",
   "validation_quality": {
-    "roc_auc": 0.707477,
-    "average_precision": 0.723371,
-    "top_decile_lift": 1.802465,
-    "top_decile_positive_rate": 0.893048,
-    "base_positive_rate": 0.495459,
-    "brier_score": 0.217854,
-    "ece_10_bin": 0.035603
+    "roc_auc": 0.709847,
+    "average_precision": 0.746357,
+    "top_decile_lift": 1.765028,
+    "top_decile_positive_rate": 0.917582,
+    "base_positive_rate": 0.519868,
+    "brier_score": 0.216176,
+    "ece_10_bin": 0.034741
   },
   "test_quality": {
-    "roc_auc": 0.728442,
-    "average_precision": 0.689713,
-    "top_decile_lift": 2.14083,
-    "top_decile_positive_rate": 0.875912,
-    "base_positive_rate": 0.409146,
-    "brier_score": 0.215744,
-    "ece_10_bin": 0.114872
+    "roc_auc": 0.725503,
+    "average_precision": 0.699534,
+    "top_decile_lift": 2.022832,
+    "top_decile_positive_rate": 0.875622,
+    "base_positive_rate": 0.432869,
+    "brier_score": 0.214363,
+    "ece_10_bin": 0.090414
   },
   "revenue_validation_quality": {
     "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
-    "row_count": 1855,
-    "rmse": 2383.351261,
-    "mae": 717.361837,
-    "mape": 1.303019,
+    "row_count": 1897,
+    "rmse": 2251.515499,
+    "mae": 704.087369,
+    "mape": 1.227699,
     "mape_note": "MAPE excludes rows with zero actual revenue.",
     "status": "ok"
   },
   "revenue_test_quality": {
     "evaluation_population": "test_rows_with_label_purchase_90d_equals_1",
-    "row_count": 1682,
-    "rmse": 2783.502817,
-    "mae": 746.159204,
-    "mape": 1.548061,
+    "row_count": 1741,
+    "rmse": 2644.808466,
+    "mae": 698.875875,
+    "mape": 1.44075,
     "mape_note": "MAPE excludes rows with zero actual revenue."
   },
   "propensity_model_candidates": [
     {
       "model_name": "logistic_regression",
-      "roc_auc": 0.697187,
-      "average_precision": 0.712097
+      "roc_auc": 0.700252,
+      "average_precision": 0.731671
     },
     {
       "model_name": "xgboost",
-      "roc_auc": 0.707477,
-      "average_precision": 0.723371
+      "roc_auc": 0.709847,
+      "average_precision": 0.746357
     }
   ],
   "revenue_model_candidates": [
     {
       "model_name": "xgboost_regressor_conditional_revenue",
       "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
-      "row_count": 1855,
-      "rmse": 2383.351261,
-      "mae": 717.361837,
-      "mape": 1.303019,
+      "row_count": 1897,
+      "rmse": 2251.515499,
+      "mae": 704.087369,
+      "mape": 1.227699,
       "mape_note": "MAPE excludes rows with zero actual revenue.",
       "status": "ok"
     },
     {
       "model_name": "constant_mean_positive_revenue",
       "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
-      "row_count": 1855,
-      "rmse": 3334.135057,
-      "mae": 1143.130244,
-      "mape": 2.8638,
+      "row_count": 1897,
+      "rmse": 3458.955299,
+      "mae": 1147.794019,
+      "mape": 2.802608,
       "mape_note": "MAPE excludes rows with zero actual revenue.",
       "status": "ok"
     }

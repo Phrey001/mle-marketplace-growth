@@ -2,8 +2,13 @@
 
 An end-to-end machine learning project for marketplace revenue growth via two complementary ML levers:
 
-- Purchase propensity scoring + incentive allocation
-- Personalized product candidate generation
+- Purchase Propensity Engine Flow (propensity scoring + budget-constrained incentive allocation)
+- Recommender Engine Flow (candidate retrieval for personalized product exposure)
+
+## Start Here (Architecture First)
+
+`docs/architecture.pptx` is the front-facing architecture source of truth for this project.
+Read it first for system flow, design intent, and implementation boundaries before running engine quickstarts.
 
 ## Problem Statement
 
@@ -16,10 +21,11 @@ The result is lower incremental revenue and inefficient budget use.
 
 ## How This Project Addresses It
 
-- **Purchase Propensity:** predicts near-term purchase likelihood, ranks users by expected value under budget constraints, and compares targeting policies offline.
-- **Personalized Retrieval:** learns user-item affinity to surface more relevant candidate products.
-- **Shared Feature Layer:** enforces point-in-time features and time-based evaluation to reduce leakage and improve reproducibility.
-- **Business KPI Intent:** improve revenue per incentive dollar and improve relevance of surfaced items.
+| Component | What It Does | KPI Intent |
+|---|---|---|
+| Purchase Propensity Engine Flow | Predicts near-term purchase likelihood, ranks users by expected value, and compares policies offline under budget constraints. | Improve revenue per targeted user and budget efficiency. |
+| Recommender Engine Flow | Learns user-item affinity and retrieves personalized product candidates. | Improve retrieval relevance and downstream engagement potential. |
+| Shared Feature Layer | Enforces point-in-time features and time-based evaluation conventions for both engines. | Reduce leakage risk and improve reproducibility. |
 
 ## Getting Started
 
@@ -35,34 +41,38 @@ pip install -r requirements.txt
   - `docs/purchase_propensity/quickstart.md`
   - `docs/recommender/quickstart.md`
 - Modeling choices (scaling, spend capping, calibration) are documented in `docs/purchase_propensity/spec.md`.
-- Window sensitivity now evaluates materialized feature-lookback profiles (`60/90/120`) for model-design comparison; main pipeline default remains `30d` target + `90d` lookback.
 
 ## Tech Stack
 
-- Shared: Python, DuckDB, NumPy, Pandas-style CSV artifacts, YAML config.
-- Purchase propensity: scikit-learn + XGBoost.
-- Recommender: scikit-learn (MF baseline), PyTorch (two-tower training), FAISS (ANN retrieval).
-- Detailed per-engine stack and design contracts:
-  - `docs/purchase_propensity/spec.md`
-  - `docs/recommender/spec.md`
+| Scope | Stack |
+|---|---|
+| Shared | Python, DuckDB, NumPy, CSV artifacts, YAML config |
+| Purchase propensity | scikit-learn, XGBoost |
+| Recommender | scikit-learn (MF baseline), PyTorch (two-tower), FAISS (ANN retrieval) |
 
-## Portfolio Signal Snapshot (Purchase Propensity)
+Detailed per-engine stack and contracts:
+- `docs/purchase_propensity/spec.md`
+- `docs/recommender/spec.md`
 
-- End-to-end reproducible flow: feature store -> strict temporal split -> model training -> budget-constrained policy backtest -> analytical report.
-- Temporal rigor: strict monthly `10/1/1` chronology per cycle with one rolling retrain cycle for drift/readiness signal.
-- Decision discipline: structural search frozen on initial cycle, retrain kept fixed for fair comparability and lower operational complexity.
-- Business framing: ML expected-value policy benchmarked against Random and RFM under equal budget-constrained Top-K targeting.
-- Scope integrity: offline policy evidence only; no causal incrementality overclaim.
+## Portfolio Signal Snapshot
+
+| Engine | Signal Highlights |
+|---|---|
+| Purchase Propensity Engine Flow | Reproducible flow (feature store -> strict `10/1/1` split -> training -> budget-constrained backtest -> report), frozen structural decisions after initial sensitivity, ML policy benchmarked vs Random/RFM. |
+| Recommender Engine Flow | Reproducible retrieval flow (shared feature layer -> time split -> Popularity/MF/Two-Tower training -> retrieval eval -> report), validation-driven model selection, Stage 1 candidate generation scope. |
 
 ## Key Limitations
 
-- **Not included:** online A/B testing. Why: this repo is local/offline and has no live traffic.
-- **Not included:** offline causal incrementality estimation for promotions (for example, “did the promo itself cause extra purchases?”). Why: no randomized treatment assignment or reliable promo-exposure logs in this dataset.
-- **Production recommendation (out of scope for this repo):** run randomized A/B testing for promotion decisions before broad rollout to measure true incremental impact.
+| Limitation | Why It Matters |
+|---|---|
+| No online A/B testing | Repo is local/offline with no live traffic, so online impact cannot be measured directly. |
+| No offline causal incrementality estimation for promotions | Dataset lacks randomized treatment assignment and reliable promo-exposure logs. |
+| No recommender Stage 2 re-ranking | Current recommender scope is intentionally Stage 1 retrieval only. |
+| Production next step (out of scope) | Run randomized A/B tests for promotion decisions before broad rollout. |
 
-## Policy Interpretation
+## Purchase Propensity Policy Interpretation
 
-- The 3-policy comparison is implemented: ML expected-value targeting, random baseline, and RFM heuristic baseline.
+- Purchase propensity policy comparison uses three policies: ML expected-value targeting, random baseline, and RFM heuristic baseline.
 - Budget is used to decide **who to target** (allocation logic), not to simulate behavior change from incentive exposure.
 - Results compare policy performance on historical holdout outcomes; they do **not** estimate causal incrementality.
 - Policy definitions and design details are documented in `docs/purchase_propensity/spec.md`.
@@ -76,4 +86,4 @@ pip install -r requirements.txt
 
 [Base dataset: Online Retail II (UCI transactional dataset)](https://www.kaggle.com/datasets/mashlyn/online-retail-ii-uci/data)
 
-This Online Retail II data set contains all the transactions occurring for a UK-based and registered, non-store online retail between 01/12/2009 and 09/12/2011.The company mainly sells unique all-occasion gift-ware. Many customers of the company are wholesalers.
+This Online Retail II dataset contains transactions from a UK-based non-store online retail business between 2009-12-01 and 2011-12-09. The company mainly sells unique all-occasion giftware, and many customers are wholesalers.

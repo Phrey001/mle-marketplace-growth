@@ -33,11 +33,13 @@ PYTHONPATH=src python scripts/report_policy_comparison_chart.py
 ```
 
 Notes:
-- Initial cycle uses `window_selection_mode=sensitivity` to freeze structural decisions.
-- Retrain cycle uses `window_selection_mode=fixed` to avoid reopening structural search.
-- engine-specific gold build requires prebuilt shared silver; run `--build-engines shared` first.
-- cycle dates are validated against available shared silver event-date bounds during feature-store build.
-- Design details: `docs/purchase_propensity/spec.md`.
+| Item | Meaning |
+|---|---|
+| Cycle 1 mode | `window_selection_mode=sensitivity` to freeze structural decisions |
+| Cycle 2 mode | `window_selection_mode=fixed` to avoid reopening structural search |
+| Shared dependency | Engine-specific gold build requires prebuilt shared silver (`--build-engines shared`) |
+| Date validation | Cycle dates are validated against shared silver event-date bounds |
+| Design reference | `docs/purchase_propensity/spec.md` |
 
 Optional clean rebuild:
 
@@ -48,15 +50,15 @@ rm -rf data/gold/feature_store/purchase_propensity/*
 
 ## Outputs To Review
 
-- Must review (both cycles):
-  - `output_validation_summary.json`
-  - `output_interpretation.md`
-  - `offline_policy_budget_test.json`
-- Optional deep dive:
-  - `train_metrics.json`
-  - `prediction_scores.csv`
-  - `report_assets/policy_comparison_cycles.png`
-  - initial cycle only: `window_sensitivity.json`, `window_validation_dashboard.png`
+| Priority | Artifact(s) | Why |
+|---|---|---|
+| Must | `output_validation_summary.json` | Confirms run artifacts are internally valid |
+| Must | `output_interpretation.md` | Fast narrative summary of run outcomes |
+| Must | `offline_policy_budget_test.json` | Final test-slice policy comparison |
+| Optional | `train_metrics.json` | Detailed model-quality diagnostics |
+| Optional | `prediction_scores.csv` | Serving-style scored user list |
+| Optional | `report_assets/policy_comparison_cycles.png` | Report chart asset |
+| Optional (cycle 1 only) | `window_sensitivity.json`, `window_validation_dashboard.png` | Structural search and freeze evidence |
 
 ## Optional Checks
 

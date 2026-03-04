@@ -1,6 +1,4 @@
-train_start_date: "2009-12-09" # first-year baseline cycle start (monthly snapshots)
-train_end_date: "2010-11-09" # first-year baseline cycle end (12 snapshots total)
-score_as_of_date: "2010-11-09" # cycle score/evaluation snapshot
+panel_end_date: "2010-11-01" # initial cycle anchor; pipeline derives 11 prior monthly snapshots + this month (12 total; strict 10/1/1 split)
 window_selection_mode: "sensitivity" # run structural search and freeze on initial cycle
 prediction_window_days: 30 # baseline default only; final frozen prediction window comes from sensitivity output
 feature_lookback_days: 90 # baseline default only; final frozen lookback window comes from sensitivity output

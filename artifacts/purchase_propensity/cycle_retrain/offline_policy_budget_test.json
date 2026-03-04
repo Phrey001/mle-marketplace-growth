@@ -18,29 +18,29 @@
       "policy": "ml_top_expected_value",
       "targeted_users": 1000,
       "budget_spend": 5000.0,
-      "actual_purchase_rate": 0.586,
-      "actual_revenue_total": 743741.38,
-      "actual_revenue_per_targeted_user": 743.74138
+      "actual_purchase_rate": 0.656,
+      "actual_revenue_total": 949468.381,
+      "actual_revenue_per_targeted_user": 949.468381
     },
     {
       "policy": "random_baseline",
       "targeted_users": 1000,
       "budget_spend": 5000.0,
-      "actual_purchase_rate": 0.287,
-      "actual_revenue_total": 232733.54,
-      "actual_revenue_per_targeted_user": 232.73354
+      "actual_purchase_rate": 0.345,
+      "actual_revenue_total": 307657.48,
+      "actual_revenue_per_targeted_user": 307.65748
     },
     {
       "policy": "rfm_heuristic",
       "targeted_users": 1000,
       "budget_spend": 5000.0,
-      "actual_purchase_rate": 0.585,
-      "actual_revenue_total": 744116.74,
-      "actual_revenue_per_targeted_user": 744.11674
+      "actual_purchase_rate": 0.65,
+      "actual_revenue_total": 949312.781,
+      "actual_revenue_per_targeted_user": 949.312781
     }
   ],
   "interpretation_kpis": {
-    "ml_vs_random_revenue_per_user_delta": 511.00784,
-    "ml_vs_rfm_revenue_per_user_delta": -0.37536
+    "ml_vs_random_revenue_per_user_delta": 641.810901,
+    "ml_vs_rfm_revenue_per_user_delta": 0.1556
   }
 }

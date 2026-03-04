@@ -42,24 +42,26 @@ Split contract (chronological, leakage-safe):
 
 ## Models
 
-Baselines:
-1. Random (theoretical floor, documented as `K/N` anchor in interpretation)
-2. Popularity
-3. Matrix Factorization (MF)
-
-Primary model:
-- Two-tower retrieval model with user/item embeddings and dot-product scoring.
-
-Baseline hierarchy used in this repo:
-- Level 0: Random baseline (theoretical floor)
-- Level 1: Popularity baseline (strong heuristic)
-- Level 2: MF (classical ML baseline)
-- Level 3: Two-tower (neural retrieval baseline)
+| Level | Model | Role |
+|---|---|---|
+| 0 | Random | Theoretical floor (`K/N` anchor in interpretation) |
+| 1 | Popularity | Strong heuristic baseline |
+| 2 | Matrix Factorization (MF) | Classical ML baseline |
+| 3 | Two-tower | Neural retrieval baseline (primary model) |
 
 Training characteristics:
 - implicit positives from train interactions
 - sampled negatives
 - binary objective for pair discrimination
+
+## Pipeline Map
+
+| Stage | Script | Key output(s) |
+|---|---|---|
+| Feature-store build | `mle_marketplace_growth.feature_store.build` | `interaction_events.csv`, `user_item_splits.csv`, index tables |
+| Model training/evaluation | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
+| Retrieval serving artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
+| Output validation/reporting | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
 
 ## Serving (Retrieval)
 
@@ -105,16 +107,7 @@ Validation/report artifacts:
 - `artifacts/recommender/output_interpretation.md`
 - `docs/recommender/analysis_report.md`
 
-## Pipeline Flow
-
-1. Build shared silver once:
-- `python -m mle_marketplace_growth.feature_store.build --shared-config configs/shared.yaml --build-engines shared`
-
-2. Run recommender end-to-end:
-- `python -m mle_marketplace_growth.recommender.run_pipeline --config configs/recommender/default.yaml`
-
-3. Optional chart regeneration:
-- `python scripts/report_recommender_recall_chart.py`
+Run commands are documented in `docs/recommender/quickstart.md`.
 
 ## Acceptance Criteria
 

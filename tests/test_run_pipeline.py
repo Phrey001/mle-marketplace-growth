@@ -8,47 +8,12 @@ from mle_marketplace_growth.purchase_propensity import run_pipeline
 
 
 class RunPipelineArgValidationTest(unittest.TestCase):
-    STRICT_START_DATE = "2010-12-09"
-    STRICT_END_DATE = "2011-11-09"
+    PANEL_END_DATE = "2011-11-09"
 
-    def test_strict_mode_requires_exactly_twelve_snapshots(self) -> None:
-        argv = [
-            "run_pipeline.py",
-            "--train-start-date",
-            "2011-01-09",
-            "--train-end-date",
-            "2011-09-09",
-        ]
+    def test_panel_end_date_is_required(self) -> None:
+        argv = ["run_pipeline.py"]
         with patch("sys.argv", argv):
-            with self.assertRaisesRegex(
-                ValueError,
-                "Strict architecture split requires exactly 12 monthly snapshots",
-            ):
-                run_pipeline.main()
-
-    def test_out_of_time_10_1_1_requires_exactly_twelve_snapshots(self) -> None:
-        argv = [
-            "run_pipeline.py",
-            "--train-start-date",
-            "2011-03-09",
-            "--train-end-date",
-            "2011-11-09",
-        ]
-        with patch("sys.argv", argv):
-            with self.assertRaisesRegex(
-                ValueError,
-                "Strict architecture split requires exactly 12 monthly snapshots",
-            ):
-                run_pipeline.main()
-
-    def test_train_start_and_end_dates_are_required(self) -> None:
-        argv = [
-            "run_pipeline.py",
-            "--train-start-date",
-            self.STRICT_START_DATE,
-        ]
-        with patch("sys.argv", argv):
-            with self.assertRaisesRegex(ValueError, "Both --train-start-date and --train-end-date are required"):
+            with self.assertRaisesRegex(ValueError, "--panel-end-date is required"):
                 run_pipeline.main()
 
     def test_config_requires_yaml_extension(self) -> None:
@@ -64,10 +29,8 @@ class RunPipelineArgValidationTest(unittest.TestCase):
     def test_prediction_window_rejects_unsupported_main_pipeline_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-start-date",
-            self.STRICT_START_DATE,
-            "--train-end-date",
-            self.STRICT_END_DATE,
+            "--panel-end-date",
+            self.PANEL_END_DATE,
             "--prediction-window-days",
             "45",
         ]
@@ -78,10 +41,8 @@ class RunPipelineArgValidationTest(unittest.TestCase):
     def test_feature_lookback_window_rejects_unsupported_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-start-date",
-            self.STRICT_START_DATE,
-            "--train-end-date",
-            self.STRICT_END_DATE,
+            "--panel-end-date",
+            self.PANEL_END_DATE,
             "--feature-lookback-days",
             "30",
         ]
@@ -92,10 +53,8 @@ class RunPipelineArgValidationTest(unittest.TestCase):
     def test_feature_lookback_window_rejects_not_yet_wired_values(self) -> None:
         argv = [
             "run_pipeline.py",
-            "--train-start-date",
-            self.STRICT_START_DATE,
-            "--train-end-date",
-            self.STRICT_END_DATE,
+            "--panel-end-date",
+            self.PANEL_END_DATE,
             "--feature-lookback-days",
             "150",
         ]
@@ -133,8 +92,7 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             tmp_root = Path(tmp_dir)
             config_path = tmp_root / "pipeline_config.yaml"
             config_path.write_text(
-                "train_start_date: '2010-12-09'\n"
-                "train_end_date: '2011-11-09'\n"
+                "panel_end_date: '2011-11-09'\n"
                 "window_selection_mode: fixed\n",
                 encoding="utf-8",
             )
@@ -146,9 +104,10 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             ]
             with patch("sys.argv", argv):
                 with patch("mle_marketplace_growth.purchase_propensity.run_pipeline._run_module") as mock_run:
-                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
-                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
-                            run_pipeline.main()
+                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline._merge_train_datasets"):
+                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
+                            with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
+                                run_pipeline.main()
             self.assertTrue(mock_run.called)
 
 

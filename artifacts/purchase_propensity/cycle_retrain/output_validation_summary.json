@@ -18,7 +18,7 @@
       "check": "ml_beats_random_revenue_per_user",
       "description": "ML targeting should match or outperform random baseline on holdout revenue per targeted user.",
       "passed": true,
-      "detail": "ml=743.741380, random=232.733540"
+      "detail": "ml=949.468381, random=307.657480"
     },
     {
       "check": "budget_policy_validation_and_test_outputs_present",

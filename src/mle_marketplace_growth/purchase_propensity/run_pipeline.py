@@ -25,15 +25,24 @@ def _add_month(current: date) -> date:
     return date(year, month, day)
 
 
-def _generate_snapshot_dates(start_date: date, end_date: date) -> list[str]:
-    if end_date < start_date: raise ValueError("--train-end-date must be on or after --train-start-date")
+def _shift_month(current: date, delta_months: int) -> date:
+    month_index = current.month - 1 + delta_months
+    year = current.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(current.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
 
-    dates = []
+
+def _generate_snapshot_dates(panel_end_date: date) -> list[str]:
+    start_date = _shift_month(panel_end_date, -11)
+    snapshots = []
     current = start_date
-    while current <= end_date:
-        dates.append(current.isoformat())
+    for _ in range(12):
+        snapshots.append(current.isoformat())
         current = _add_month(current)
-    return dates
+    if snapshots[-1] != panel_end_date.isoformat():
+        raise ValueError("Derived monthly snapshot panel does not end on --panel-end-date")
+    return snapshots
 
 
 def _merge_train_datasets(train_paths: list[Path], merged_output_path: Path) -> None:
@@ -89,9 +98,7 @@ def main() -> None:
     parser.add_argument("--input-csv", default=cfg("input_csv", "data/bronze/online_retail_ii/raw.csv"), help="Path to raw source CSV")
     parser.add_argument("--output-root", default=cfg("output_root", "data"), help="Output root for feature-store build")
     parser.add_argument("--artifacts-dir", default=cfg("artifacts_dir", "artifacts/purchase_propensity"), help="Output directory for model/evaluation artifacts")
-    parser.add_argument("--train-start-date", default=cfg("train_start_date", None), help="Optional start date (YYYY-MM-DD) for generated training snapshots")
-    parser.add_argument("--train-end-date", default=cfg("train_end_date", None), help="Optional end date (YYYY-MM-DD) for generated training snapshots")
-    parser.add_argument("--score-as-of-date", default=cfg("score_as_of_date", "2011-11-09"), help="Feature snapshot date used for scoring/evaluation")
+    parser.add_argument("--panel-end-date", default=cfg("panel_end_date", None), help="End anchor (YYYY-MM-DD) for strict 12-month panel; derived split is 10 train / 1 val / 1 test.")
     parser.add_argument("--prediction-window-days", type=int, default=int(cfg("prediction_window_days", 30)), help="Allowed values: 30, 60, 90 (strict demo execution path uses 30).")
     parser.add_argument("--feature-lookback-days", type=int, default=int(cfg("feature_lookback_days", 90)), help="Allowed values: 60, 90, 120 (strict demo execution path uses 90).")
     parser.add_argument("--window-selection-mode", choices=["sensitivity", "fixed"], default=cfg("window_selection_mode", "sensitivity"), help="`sensitivity`: select structural decisions from window_sensitivity output; `fixed`: use config values directly.")
@@ -104,20 +111,17 @@ def main() -> None:
     input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
     artifacts_dir = Path(args.artifacts_dir)
-    if not args.train_start_date or not args.train_end_date:
-        raise ValueError("Both --train-start-date and --train-end-date are required")
-    start_date = date.fromisoformat(args.train_start_date)
-    end_date = date.fromisoformat(args.train_end_date)
-    train_as_of_dates = _generate_snapshot_dates(start_date, end_date)
-    if len(train_as_of_dates) != 12: raise ValueError("Strict architecture split requires exactly 12 monthly snapshots from --train-start-date/--train-end-date (10 train / 1 val / 1 test)")
+    if not args.panel_end_date:
+        raise ValueError("--panel-end-date is required")
+    panel_end_date = date.fromisoformat(args.panel_end_date)
+    train_as_of_dates = _generate_snapshot_dates(panel_end_date)
+    score_as_of_date = train_as_of_dates[-1]
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
 
     # ===== Build Feature-Store Snapshots =====
-    snapshots_to_build = set(train_as_of_dates)
-    snapshots_to_build.add(args.score_as_of_date)
-    for as_of_date in sorted(snapshots_to_build):
+    for as_of_date in train_as_of_dates:
         build_args: list[object] = [
             "--build-engines",
             "purchase_propensity",
@@ -203,7 +207,7 @@ def main() -> None:
         / "feature_store"
         / "purchase_propensity"
         / "user_features_asof"
-        / f"as_of_date={args.score_as_of_date}"
+        / f"as_of_date={score_as_of_date}"
         / "user_features_asof.csv"
     )
     model_path = artifacts_dir / "propensity_model.pkl"
