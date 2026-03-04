@@ -21,7 +21,7 @@
 
 ## 2) Evaluation Setup
 
-**YAML-configurable knobs** for this run (`configs/purchase_propensity/demo_cycle_initial.yaml` and `configs/purchase_propensity/demo_cycle_retrain.yaml`):
+**YAML-configurable knobs** for this run (`configs/purchase_propensity/cycle_initial.yaml` and `configs/purchase_propensity/cycle_retrain.yaml`):
 - Validation mode: `out_of_time_10_1_1` (strict 10 train months + 1 validation month + 1 test month)
 - Policy comparison mode: budget-constrained `Top-K` per slice (`K = budget / cost_per_user`)
 - Budget policy assumptions: budget `5000`, cost/user `5`

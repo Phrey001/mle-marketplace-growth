@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 def _write_fixture_raw_csv(path: Path) -> None:
+    # Generate a deterministic synthetic retail dataset with enough variation
+    # to exercise strict 10/1/1 splits, policy backtests, and sensitivity flow.
     path.parent.mkdir(parents=True, exist_ok=True)
     headers = [
         "Invoice",
@@ -126,6 +128,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
         subprocess.run(command, check=True, env=env, cwd=Path(__file__).resolve().parents[1])
 
     def test_end_to_end_recommended_flow(self) -> None:
+        # Arrange: temporary repo-like workspace with synthetic raw data.
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -155,6 +158,8 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+
+            # Act: build shared layer, then run propensity pipeline.
             self._run(
                 [
                     ".venv/bin/python",
@@ -180,6 +185,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                 env,
             )
 
+            # Assert: core train/eval/sensitivity artifacts are populated and coherent.
             train_metrics = json.loads((artifacts_root / "train_metrics.json").read_text(encoding="utf-8"))
             self.assertIn(train_metrics["selected_model_name"], {"logistic_regression", "xgboost"})
             self.assertEqual(train_metrics["calibration_method"], "sigmoid")

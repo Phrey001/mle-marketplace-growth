@@ -47,7 +47,7 @@ Expected value in this repo:
 
 | Stage | Script | Key output(s) |
 |---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build` | `propensity_train_dataset`, `user_features_asof` |
+| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` | 12 snapshot partitions of `propensity_train_dataset`, `user_features_asof` |
 | Model training | `mle_marketplace_growth.purchase_propensity.train` | `propensity_model.pkl`, `train_metrics.json`, `validation_predictions.csv`, `test_predictions.csv` |
 | Structural sensitivity (initial cycle) | `mle_marketplace_growth.purchase_propensity.window_sensitivity` | `window_sensitivity.json`, `window_validation_dashboard.png` |
 | Policy backtest | `mle_marketplace_growth.purchase_propensity.policy_budget_evaluation` | `offline_policy_budget_validation.json`, `offline_policy_budget_test.json` |

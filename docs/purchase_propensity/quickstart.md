@@ -11,22 +11,30 @@ Datetime/global-vs-engine config strategy is documented in `docs/README.md`.
 
 ## Recommended Runs
 
-`run_pipeline` orchestrates feature-store build, train, predict, evaluate, and offline policy evaluation.
+`run_pipeline` orchestrates train, predict, evaluate, and offline policy evaluation from prebuilt gold datasets.
 It writes:
 - `<artifacts-dir>/output_validation_summary.json`
 - `<artifacts-dir>/output_interpretation.md`
+
+Pipeline execution is intentionally modular. Each pipeline stage can be run independently to simplify experimentation and reduce orchestration complexity for this demo repository.
 
 Two-cycle demo flow (manual, config-driven):
 
 ```bash
 # Shared layer (run once; reuse across engines/cycles)
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build --shared-config configs/shared.yaml --build-engines shared
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silver --shared-config configs/shared.yaml
 
-# Cycle 1: initial batch (first-year panel)
-PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/demo_cycle_initial.yaml --artifacts-dir artifacts/purchase_propensity/cycle_initial
+# Cycle 1 gold layer (12 monthly snapshots from cycle config)
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_purchase_propensity --config configs/purchase_propensity/cycle_initial.yaml
 
-# Cycle 2: single rolling retrain
-PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/demo_cycle_retrain.yaml --artifacts-dir artifacts/purchase_propensity/cycle_retrain
+# Cycle 1: initial batch (first-year panel; model validation + policy validation/test)
+PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/cycle_initial.yaml
+
+# Cycle 2 gold layer (rolling 12-month overlap from cycle config)
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_purchase_propensity --config configs/purchase_propensity/cycle_retrain.yaml
+
+# Cycle 2: single rolling retrain (same validation + test evaluation flow)
+PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/cycle_retrain.yaml
 
 # Regenerate policy comparison chart used in analysis report
 PYTHONPATH=src python scripts/report_policy_comparison_chart.py
@@ -37,7 +45,9 @@ Notes:
 |---|---|
 | Cycle 1 mode | `window_selection_mode=sensitivity` to freeze structural decisions |
 | Cycle 2 mode | `window_selection_mode=fixed` to avoid reopening structural search |
-| Shared dependency | Engine-specific gold build requires prebuilt shared silver (`--build-engines shared`) |
+| Shared dependency | Engine-specific gold build requires prebuilt shared silver (`build_shared_silver`) |
+| Gold dependency | ML pipeline consumes prebuilt purchase-propensity gold snapshots from `build_gold_purchase_propensity` |
+| Artifact folder default | `--config cycle_initial.yaml` maps to `artifacts/purchase_propensity/cycle_initial` (same for retrain); override with `--artifacts-dir` only when needed |
 | Date validation | Cycle dates are validated against shared silver event-date bounds |
 | Design reference | `docs/purchase_propensity/spec.md` |
 

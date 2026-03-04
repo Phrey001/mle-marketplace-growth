@@ -8,6 +8,7 @@ from mle_marketplace_growth.purchase_propensity.train import _load_training_rows
 
 class PurchasePropensityMinimalTests(unittest.TestCase):
     def _write_csv(self, fieldnames: list[str], rows: list[dict]) -> Path:
+        # Small helper for focused input fixtures per test.
         temp_dir = Path(tempfile.mkdtemp())
         path = temp_dir / "input.csv"
         with path.open("w", encoding="utf-8", newline="") as file:
@@ -17,6 +18,7 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
         return path
 
     def test_window_overlap_test_chronological_split_order(self) -> None:
+        # 12 monthly snapshots should split into 10/1/1 chronological buckets.
         rows = []
         for idx in range(12):
             rows.append(
@@ -46,6 +48,7 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
         self.assertLess(next(iter(val_dates)), next(iter(test_dates)))
 
     def test_split_leakage_test_no_date_overlap_between_subsets(self) -> None:
+        # Train/validation/test snapshots must be disjoint.
         rows = []
         for idx in range(12):
             rows.append(
@@ -73,6 +76,7 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
         self.assertTrue(val_dates.isdisjoint(test_dates))
 
     def test_deterministic_seed_test_random_policy_score_is_stable(self) -> None:
+        # Random policy scores are seeded and should be reproducible.
         rows = [
             {
                 "user_id": "u1",
@@ -91,6 +95,7 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
         self.assertEqual(_stable_ratio("fixed_key"), _stable_ratio("fixed_key"))
 
     def test_feature_column_existence_test_missing_feature_column_raises(self) -> None:
+        # Missing required feature columns should fail fast at load time.
         fieldnames = [
             "user_id",
             "as_of_date",
@@ -137,4 +142,3 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

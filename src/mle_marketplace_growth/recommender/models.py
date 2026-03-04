@@ -10,6 +10,7 @@ from sklearn.decomposition import TruncatedSVD
 
 
 def _popularity_scores(train: dict[str, set[str]], item_to_idx: dict[str, int], transform: str = "linear") -> np.ndarray:
+    # Count item frequency from train interactions.
     scores = np.zeros(len(item_to_idx), dtype=float)
     for items in train.values():
         for item_id in items:
@@ -33,11 +34,13 @@ def _train_mf(
     algorithm: str = "randomized",
     tol: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    # Build user-item matrix from train interactions.
     matrix = np.zeros((len(user_to_idx), len(item_to_idx)), dtype=float)
     for user_id, items in train.items():
         user_idx = user_to_idx[user_id]
         for item_id in items:
             matrix[user_idx, item_to_idx[item_id]] = 1.0
+    # Optional weighting before truncated SVD.
     if weighting == "tfidf":
         item_df = matrix.sum(axis=0)
         idf = np.log1p(matrix.shape[0] / np.maximum(item_df, 1.0))
@@ -46,6 +49,7 @@ def _train_mf(
         matrix = matrix / np.maximum(row_norm, 1e-12)
     elif weighting != "binary":
         raise ValueError(f"Unsupported MF weighting mode: {weighting}")
+    # Fit low-rank decomposition and return user/item factors.
     effective_components = max(2, min(n_components, min(matrix.shape) - 1))
     svd = TruncatedSVD(
         n_components=effective_components,
@@ -80,6 +84,7 @@ def _train_two_tower(
     device: str = "auto",
     verbose: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
+    # Reproducibility setup.
     rng = random.Random(42)
     np_rng = np.random.default_rng(42)
     torch.manual_seed(42)
@@ -92,6 +97,7 @@ def _train_two_tower(
     if verbose:
         print(f"[two_tower] device={device_obj.type}")
 
+    # Build positive user-item pairs.
     positives: list[tuple[int, int]] = []
     for user_id, items in train.items():
         user_idx = user_to_idx[user_id]
@@ -101,6 +107,7 @@ def _train_two_tower(
 
     if not positives: raise ValueError("No positive interactions available for two-tower training.")
 
+    # Initialize embedding tables and optional tower MLPs.
     user_embedding_layer = torch.nn.Embedding(len(user_to_idx), embedding_dim).to(device_obj)
     item_embedding_layer = torch.nn.Embedding(len(item_to_idx), embedding_dim).to(device_obj)
     user_tower = (
@@ -138,6 +145,7 @@ def _train_two_tower(
     if early_stop_metric not in {"loss", "val_recall_at_k"}:
         raise ValueError("early_stop_metric must be one of: loss, val_recall_at_k")
 
+    # Build validation cache for optional recall-based early stopping.
     validation_user_indices: list[int] = []
     validation_target_indices: list[set[int]] = []
     validation_seen_indices: list[list[int]] = []
@@ -155,6 +163,7 @@ def _train_two_tower(
     best_loss = float("inf")
     best_recall = -1.0
     no_improvement_rounds = 0
+
     def _validation_recall_at_k() -> float:
         if not validation_user_indices:
             return 0.0
@@ -183,6 +192,7 @@ def _train_two_tower(
             user_tower.train(); item_tower.train()
             return recall_sum / len(validation_user_indices)
 
+    # Mini-batch training loop with in-batch + sampled negatives.
     for epoch in range(1, epochs + 1):
         user_tower.train(); item_tower.train()
         rng.shuffle(positives)
@@ -250,6 +260,7 @@ def _train_two_tower(
                 )
             break
 
+    # Export final embeddings to numpy arrays.
     with torch.no_grad():
         user_tower.eval(); item_tower.eval()
         final_user = user_tower(user_embedding_layer.weight.detach()).cpu().numpy()

@@ -10,6 +10,7 @@ def run_validation(
     expect_window_sensitivity: bool,
     output_json: Path | None = None,
 ) -> tuple[bool, dict]:
+    # Load required artifacts.
     train_metrics_path, budget_eval_test_path, budget_eval_validation_path = (
         artifacts_dir / "train_metrics.json",
         artifacts_dir / "offline_policy_budget_test.json",
@@ -24,6 +25,7 @@ def run_validation(
 
     checks: list[dict] = []
 
+    # Model sanity checks.
     selected_model_name = train_metrics.get("selected_model_name")
     checks.append(
         {
@@ -47,6 +49,7 @@ def run_validation(
         }
     )
 
+    # Policy outcome checks.
     by_policy = {row.get("policy"): row for row in budget_eval_test.get("policy_comparison", [])}
     ml_revenue = float(by_policy.get("ml_top_expected_value", {}).get("actual_revenue_per_targeted_user", 0.0))
     random_revenue = float(by_policy.get("random_baseline", {}).get("actual_revenue_per_targeted_user", 0.0))
@@ -82,6 +85,7 @@ def run_validation(
         }
     )
 
+    # Optional sensitivity checks.
     sensitivity_path = artifacts_dir / "window_sensitivity.json"
     if expect_window_sensitivity:
         if not sensitivity_path.exists(): raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
@@ -99,6 +103,7 @@ def run_validation(
     passed = all(row["passed"] for row in checks)
     summary = {"passed": passed, "artifacts_dir": str(artifacts_dir), "checks": checks}
 
+    # Optionally persist validation summary.
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -111,6 +116,7 @@ def write_interpretation(
     output_md: Path | None = None,
     expect_window_sensitivity: bool = False,
 ) -> Path:
+    # Load core artifacts.
     train_metrics, budget_eval_test, budget_eval_validation = (
         json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8")),
         json.loads((artifacts_dir / "offline_policy_budget_test.json").read_text(encoding="utf-8")),
@@ -132,6 +138,7 @@ def write_interpretation(
         float(policies.get("rfm_heuristic", {}).get("actual_revenue_per_targeted_user", 0.0)),
     )
 
+    # Optionally include sensitivity summary.
     window_summary = "Window sensitivity not run in fixed mode."
     if expect_window_sensitivity:
         sensitivity_path = artifacts_dir / "window_sensitivity.json"
@@ -185,12 +192,14 @@ def write_interpretation(
     return report_path
 
 def main() -> None:
+    # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Validate generated purchase propensity artifacts.")
     parser.add_argument("--artifacts-dir", default="artifacts/purchase_propensity", help="Directory containing generated artifacts")
     parser.add_argument("--output-json", default="artifacts/purchase_propensity/output_validation_summary.json", help="Where to write output-validation summary JSON")
     parser.add_argument("--expect-window-sensitivity", action="store_true", help="Require window_sensitivity.json with 30/60/90 windows")
     args = parser.parse_args()
 
+    # Run checks and emit interpretation.
     passed, summary = run_validation(artifacts_dir=Path(args.artifacts_dir), expect_window_sensitivity=args.expect_window_sensitivity, output_json=Path(args.output_json))
     if not passed: raise SystemExit(f"Validation failed: {[row for row in summary['checks'] if not row['passed']]}")
     interpretation_path = write_interpretation(

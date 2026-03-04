@@ -58,7 +58,7 @@ Training characteristics:
 
 | Stage | Script | Key output(s) |
 |---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build` | `interaction_events.csv`, `user_item_splits.csv`, index tables |
+| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.csv`, `user_item_splits.csv`, index tables |
 | Model training/evaluation | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
 | Retrieval serving artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
 | Output validation/reporting | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |

@@ -8,10 +8,12 @@ from mle_marketplace_growth.purchase_propensity.validate_outputs import run_vali
 
 class ValidateOutputsTest(unittest.TestCase):
     def _write_json(self, path: Path, payload: dict) -> None:
+        # Compact helper for per-test artifact payloads.
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
 
     def test_run_validation_pass(self) -> None:
+        # Happy path: supported model + full policy rows + sensitivity coverage.
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifacts = Path(tmp_dir)
             self._write_json(
@@ -58,6 +60,7 @@ class ValidateOutputsTest(unittest.TestCase):
             self.assertTrue(all(row["passed"] for row in summary["checks"]))
 
     def test_run_validation_fail(self) -> None:
+        # Failure path: invalid model/metrics and incomplete policy outputs.
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifacts = Path(tmp_dir)
             self._write_json(

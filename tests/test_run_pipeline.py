@@ -10,6 +10,7 @@ from mle_marketplace_growth.purchase_propensity import run_pipeline
 class RunPipelineArgValidationTest(unittest.TestCase):
     PANEL_END_DATE = "2011-11-09"
 
+    # ===== Argument + Config Validation =====
     def test_panel_end_date_is_required(self) -> None:
         argv = ["run_pipeline.py"]
         with patch("sys.argv", argv):
@@ -62,6 +63,7 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "--feature-lookback-days must be one of"):
                 run_pipeline.main()
 
+    # ===== Data Merge Helper =====
     def test_merge_train_datasets_combines_rows_with_one_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
@@ -87,6 +89,7 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             self.assertEqual(rows[0]["user_id"], "u1")
             self.assertEqual(rows[1]["user_id"], "u2")
 
+    # ===== Config-Driven Orchestration =====
     def test_config_file_executes_pipeline_without_long_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)

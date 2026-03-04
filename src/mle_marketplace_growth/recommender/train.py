@@ -20,6 +20,7 @@ def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
+    # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Train recommender retrieval models.")
     parser.add_argument("--splits-csv", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv", help="Path to user_item_splits.csv")
     parser.add_argument("--user-index-csv", default="data/gold/feature_store/recommender/user_index/user_index.csv", help="Path to user_index.csv")
@@ -50,12 +51,14 @@ def main() -> None:
     parser.add_argument("--top-ks", default="10,20", help="Comma-separated K values for offline metrics")
     args = parser.parse_args()
 
+    # Resolve and validate inputs.
     split_path, output_dir = Path(args.splits_csv), Path(args.output_dir)
     if not split_path.exists(): raise FileNotFoundError(f"Split CSV not found: {split_path}")
     top_ks = sorted({int(value.strip()) for value in args.top_ks.split(",") if value.strip()})
     if not top_ks: raise ValueError("At least one K is required in --top-ks")
     if args.embedding_dim < 2: raise ValueError("--embedding-dim must be >= 2")
 
+    # Load split data and entity indexes.
     rows = _load_split_rows(split_path)
     _validate_split_chronology(rows)
     train, validation, test = _build_interactions(rows)
@@ -74,6 +77,7 @@ def main() -> None:
         f"early_stop_rounds={args.early_stop_rounds}, early_stop_metric={args.early_stop_metric}, early_stop_tolerance={args.early_stop_tolerance}, early_stop_k={args.early_stop_k}, temperature={args.temperature}, normalize_embeddings={bool(args.normalize_embeddings)}, tower_hidden_dim={args.tower_hidden_dim}, tower_dropout={args.tower_dropout}, device={args.device}, mf_algorithm={args.mf_algorithm}, mf_tol={args.mf_tol}",
     )
 
+    # Train candidate models.
     popularity = _popularity_scores(train, item_to_idx, transform=args.popularity_transform)
     print("[recommender.train] trained popularity baseline")
     mf_user, mf_item = _train_mf(
@@ -116,6 +120,7 @@ def main() -> None:
         tt_user, tt_item = _l2_normalize_rows(tt_user), _l2_normalize_rows(tt_item)
     print("[recommender.train] trained two_tower")
 
+    # Evaluate candidates on validation/test splits.
     model_names = ["popularity", "mf", "two_tower"]
     metrics_by_split = {
         split_name: [
@@ -157,6 +162,7 @@ def main() -> None:
         )
     selected_item_embeddings = {"two_tower": tt_item, "mf": mf_item, "popularity": popularity.reshape(-1, 1)}[selected_model_name]
 
+    # Write serving and reporting artifacts.
     output_dir.mkdir(parents=True, exist_ok=True)
     np.save(output_dir / "item_embeddings.npy", selected_item_embeddings)
     _write_json(output_dir / "item_embedding_index.json", {

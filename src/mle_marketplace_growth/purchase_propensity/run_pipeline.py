@@ -9,8 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-import yaml
-
+from mle_marketplace_growth.feature_store.build_helpers import load_yaml_defaults
 from mle_marketplace_growth.purchase_propensity.validate_outputs import run_validation, write_interpretation
 
 ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
@@ -68,47 +67,48 @@ def _run_module(module: str, *args: object) -> None:
     subprocess.run(command, check=True)
 
 
-def _load_yaml_defaults(path_value: str | None, label: str) -> dict:
-    if not path_value:
-        return {}
-    config_path = Path(path_value)
-    if not config_path.exists():
-        raise FileNotFoundError(f"{label} file not found: {config_path}")
-    if config_path.suffix.lower() not in {".yaml", ".yml"}:
-        raise ValueError(f"{label} file must use .yaml or .yml")
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(payload, dict):
-        raise ValueError(f"{label} file must contain a key-value object")
-    return payload
+def _default_artifacts_dir_from_config(config_path_value: str | None, base_dir: str) -> str:
+    if not config_path_value:
+        return base_dir
+    return str(Path(base_dir) / Path(config_path_value).stem)
+
+
+def _resolve_from_cfg(args: argparse.Namespace, cfg_get, name: str, default, cast=None):
+    value = getattr(args, name)
+    value = cfg_get(name, default) if value is None else value
+    return cast(value) if cast else value
 
 # ===== Entry Point =====
 def main() -> None:
-    # ===== Parse Config Defaults =====
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config", default=None, help="Optional YAML config file for pipeline arguments")
-    pre_args, remaining_argv = pre_parser.parse_known_args()
-
-    engine_defaults = _load_yaml_defaults(pre_args.config, "Engine config")
-    cfg = engine_defaults.get
-
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
-    parser.add_argument("--config", default=pre_args.config, help="Optional YAML config file for pipeline arguments")
+    parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
 
-    parser.add_argument("--input-csv", default=cfg("input_csv", "data/bronze/online_retail_ii/raw.csv"), help="Path to raw source CSV")
-    parser.add_argument("--output-root", default=cfg("output_root", "data"), help="Output root for feature-store build")
-    parser.add_argument("--artifacts-dir", default=cfg("artifacts_dir", "artifacts/purchase_propensity"), help="Output directory for model/evaluation artifacts")
-    parser.add_argument("--panel-end-date", default=cfg("panel_end_date", None), help="End anchor (YYYY-MM-DD) for strict 12-month panel; derived split is 10 train / 1 val / 1 test.")
-    parser.add_argument("--prediction-window-days", type=int, default=int(cfg("prediction_window_days", 30)), help="Allowed values: 30, 60, 90 (strict demo execution path uses 30).")
-    parser.add_argument("--feature-lookback-days", type=int, default=int(cfg("feature_lookback_days", 90)), help="Allowed values: 60, 90, 120 (strict demo execution path uses 90).")
-    parser.add_argument("--window-selection-mode", choices=["sensitivity", "fixed"], default=cfg("window_selection_mode", "sensitivity"), help="`sensitivity`: select structural decisions from window_sensitivity output; `fixed`: use config values directly.")
-    parser.add_argument("--force-propensity-model", choices=["logistic_regression", "xgboost"], default=cfg("force_propensity_model", None), help="Only used when --window-selection-mode=fixed.")
-    parser.add_argument("--budget", type=float, default=cfg("budget", 5000.0), help="Budget for offline policy evaluation")
-    parser.add_argument("--cost-per-user", type=float, default=cfg("cost_per_user", 5.0), help="Cost per targeted user for offline policy evaluation")
-    args = parser.parse_args(remaining_argv)
+    parser.add_argument("--output-root", default=None, help="Root containing prebuilt purchase-propensity gold feature-store datasets")
+    parser.add_argument("--artifacts-dir", default=None, help="Output directory for model/evaluation artifacts")
+    parser.add_argument("--panel-end-date", default=None, help="End anchor (YYYY-MM-DD) for strict 12-month panel; derived split is 10 train / 1 val / 1 test.")
+    parser.add_argument("--prediction-window-days", type=int, default=None, help="Allowed values: 30, 60, 90 (default baseline: 30).")
+    parser.add_argument("--feature-lookback-days", type=int, default=None, help="Allowed values: 60, 90, 120 (default baseline: 90).")
+    parser.add_argument("--window-selection-mode", choices=["sensitivity", "fixed"], default=None, help="`sensitivity`: select structural decisions from window_sensitivity output; `fixed`: use config values directly.")
+    parser.add_argument("--force-propensity-model", choices=["logistic_regression", "xgboost"], default=None, help="Only used when --window-selection-mode=fixed.")
+    parser.add_argument("--budget", type=float, default=None, help="Budget for offline policy evaluation")
+    parser.add_argument("--cost-per-user", type=float, default=None, help="Cost per targeted user for offline policy evaluation")
+    args = parser.parse_args()
+    cfg = load_yaml_defaults(args.config, "Engine config").get
+    for name, default, cast in [
+        ("output_root", "data", None),
+        ("artifacts_dir", _default_artifacts_dir_from_config(args.config, "artifacts/purchase_propensity"), None),
+        ("panel_end_date", None, None),
+        ("prediction_window_days", 30, int),
+        ("feature_lookback_days", 90, int),
+        ("window_selection_mode", "sensitivity", None),
+        ("force_propensity_model", None, None),
+        ("budget", 5000.0, float),
+        ("cost_per_user", 5.0, float),
+    ]:
+        setattr(args, name, _resolve_from_cfg(args, cfg, name, default, cast))
 
     # ===== Validate Inputs =====
-    input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
     artifacts_dir = Path(args.artifacts_dir)
     if not args.panel_end_date:
@@ -120,21 +120,7 @@ def main() -> None:
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
 
-    # ===== Build Feature-Store Snapshots =====
-    for as_of_date in train_as_of_dates:
-        build_args: list[object] = [
-            "--build-engines",
-            "purchase_propensity",
-            "--input-csv",
-            input_csv,
-            "--output-root",
-            output_root,
-            "--as-of-date",
-            as_of_date,
-        ]
-        _run_module("mle_marketplace_growth.feature_store.build", *build_args)
-
-    # ===== Build Training Input =====
+    # ===== Build Training Input (Prebuilt Gold Required) =====
     train_paths = [
         output_root
         / "gold"
@@ -145,6 +131,13 @@ def main() -> None:
         / "propensity_train_dataset.csv"
         for as_of_date in train_as_of_dates
     ]
+    missing_train_paths = [path for path in train_paths if not path.exists()]
+    if missing_train_paths:
+        raise FileNotFoundError(
+            "Missing prebuilt purchase-propensity gold datasets. "
+            "Build them first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
+            f"(example missing path: {missing_train_paths[0]})."
+        )
     if len(train_paths) == 1:
         train_input_csv = train_paths[0]
     else:
@@ -210,6 +203,12 @@ def main() -> None:
         / f"as_of_date={score_as_of_date}"
         / "user_features_asof.csv"
     )
+    if not user_features_path.exists():
+        raise FileNotFoundError(
+            "Missing prebuilt user features for scoring. "
+            "Build gold first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
+            f"(expected path: {user_features_path})."
+        )
     model_path = artifacts_dir / "propensity_model.pkl"
     prediction_scores_path = artifacts_dir / "prediction_scores.csv"
     validation_predictions_path = artifacts_dir / "validation_predictions.csv"
@@ -226,6 +225,8 @@ def main() -> None:
         "--output-csv",
         prediction_scores_path,
     )
+
+    # ===== Offline Policy Evaluation (Validation + Test) =====
     policy_eval_args = [
         "--budget",
         args.budget,

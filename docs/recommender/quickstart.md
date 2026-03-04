@@ -17,7 +17,10 @@ Sweep scope (small fixed grid):
 
 ```bash
 # Shared layer (run once; reuse across engines)
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build --shared-config configs/shared.yaml --build-engines shared
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silver --shared-config configs/shared.yaml
+
+# Recommender gold layer (reads same engine config)
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml
 
 # Fixed small-grid tuning sweep (heavier than main run)
 PYTHONPATH=src python scripts/tune_recommender_minimal.py --config configs/recommender/default.yaml
@@ -25,11 +28,16 @@ PYTHONPATH=src python scripts/tune_recommender_minimal.py --config configs/recom
 
 ## Recommended Run
 
+Pipeline execution is intentionally modular. Each pipeline stage can be run independently to simplify experimentation and reduce orchestration complexity for this demo repository.
+
 ```bash
 # Shared layer (run once; reuse across engines)
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build --shared-config configs/shared.yaml --build-engines shared
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silver --shared-config configs/shared.yaml
 
-# Recommender pipeline (feature-store gold -> train -> predict -> validate)
+# Recommender gold layer (reads same engine config)
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml
+
+# Recommender pipeline (train -> validate -> test -> top-K predict from prebuilt gold)
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.run_pipeline --config configs/recommender/default.yaml
 
 # Regenerate Recall@20 comparison chart used in analysis report
@@ -39,11 +47,12 @@ PYTHONPATH=src python scripts/report_recommender_recall_chart.py
 This command is prescribed and fail-fast:
 - no optional paths in the default workflow (fixed time window + ANN-required serving).
 - missing dependencies still fail immediately during module import/execution.
-- engine-specific gold build requires prebuilt shared silver; run `--build-engines shared` first.
+- engine-specific gold build requires prebuilt shared silver; run `build_shared_silver` first.
+- ML pipeline consumes prebuilt recommender gold tables from `build_gold_recommender`.
 - recommender event-date bounds are validated against available shared silver event-date bounds during feature-store build.
 
 This runs:
-- feature-store build for recommender tables
+- recommender model training/evaluation from prebuilt gold tables
 - training/evaluation for popularity, MF, and two-tower retrieval
 - Top-K candidate generation
 - automated output validation + interpretation (includes random baseline anchor `K/N` and lift-vs-random framing)

@@ -1,0 +1,135 @@
+"""Recommender gold-layer build steps and CLI."""
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import duckdb
+
+from .build_helpers import build_recommender_filters, copy_table_to_csv, load_sql_assets, load_yaml_defaults, run_dq_check
+from .build_shared_silver import bootstrap_silver
+
+
+def build_recommender_gold(
+    connection: duckdb.DuckDBPyConnection,
+    sql: dict[str, str],
+    *,
+    split_version: str,
+    recommender_min_event_date: str | None,
+    recommender_max_event_date: str | None,
+    silver_min_date,
+    silver_max_date,
+) -> None:
+    recommender_time_filters = build_recommender_filters(
+        recommender_min_event_date,
+        recommender_max_event_date,
+        silver_min_date,
+        silver_max_date,
+    )
+    interactions_sql = sql["recommender_interactions"].replace(
+        "{recommender_time_filters}",
+        "\n  ".join(recommender_time_filters) if recommender_time_filters else "",
+    )
+    user_item_splits_sql = sql["recommender_user_item_splits"].replace("{split_version}", split_version)
+    for statement in [interactions_sql, user_item_splits_sql, sql["recommender_user_index"], sql["recommender_item_index"]]:
+        connection.execute(statement)
+
+
+def recommender_dq_checks(sql: dict[str, str]) -> list[tuple[str, str]]:
+    return [
+        (sql["dq_invalid_split"], "DQ_GOLD_005 failed: invalid split value in gold_user_item_splits"),
+        (sql["dq_split_chronology"], "DQ_GOLD_006 failed: chronology violation in gold_user_item_splits"),
+    ]
+
+
+def main() -> None:
+    # Parse CLI + config defaults.
+    parser = argparse.ArgumentParser(description="Build recommender gold feature-store layer.")
+    parser.add_argument("--config", required=True, help="Engine YAML config file")
+    parser.add_argument("--shared-config", default=None, help="Optional shared YAML config file")
+    parser.add_argument("--input-csv", default=None, help="Path to raw source CSV (metadata only for this command)")
+    parser.add_argument("--output-root", default=None, help="Output root path for silver/gold materializations")
+    parser.add_argument("--split-version", default=None, help="Identifier for the split strategy/version written into split artifacts")
+    parser.add_argument("--recommender-min-event-date", default=None, help="Optional lower bound event_date filter for recommender datasets in YYYY-MM-DD")
+    parser.add_argument("--recommender-max-event-date", default=None, help="Optional upper bound event_date filter for recommender datasets in YYYY-MM-DD")
+    parser.add_argument("--bad-ts-threshold", type=float, default=None, help="Ignored in this command; shared layer already enforces it")
+    args = parser.parse_args()
+    defaults = load_yaml_defaults(args.shared_config, "Shared config")
+    defaults.update(load_yaml_defaults(args.config, "Engine config"))
+    cfg = defaults.get
+    args.input_csv = args.input_csv or cfg("input_csv", "data/bronze/online_retail_ii/raw.csv")
+    args.output_root = args.output_root or cfg("output_root", "data")
+    args.split_version = args.split_version or cfg("split_version", "time_rank_v1")
+    args.recommender_min_event_date = args.recommender_min_event_date or cfg("recommender_min_event_date", None)
+    args.recommender_max_event_date = args.recommender_max_event_date or cfg("recommender_max_event_date", None)
+    args.bad_ts_threshold = float(args.bad_ts_threshold if args.bad_ts_threshold is not None else 0.01)
+
+    # Resolve paths + load SQL assets.
+    input_csv = Path(args.input_csv)
+    output_root = Path(args.output_root)
+    sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
+    silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"
+    gold_root = output_root / "gold" / "feature_store"
+    recommender_root = gold_root / "recommender"
+    manifest_path = gold_root / "_meta" / "run_manifest.json"
+
+    # Bootstrap shared silver and validate available time bounds.
+    connection = duckdb.connect(database=":memory:")
+    bootstrap_silver(
+        connection,
+        build_shared=False,
+        input_csv=input_csv,
+        silver_path=silver_path,
+        sql=sql,
+        bad_ts_threshold=args.bad_ts_threshold,
+    )
+    silver_min_date, silver_max_date = connection.execute("SELECT min(event_date), max(event_date) FROM silver_transactions_line_items").fetchone()
+    if silver_min_date is None or silver_max_date is None:
+        raise ValueError("No rows in silver_transactions_line_items; cannot build gold layers")
+
+    # Build recommender gold tables + run DQ checks.
+    build_recommender_gold(
+        connection,
+        sql,
+        split_version=args.split_version,
+        recommender_min_event_date=args.recommender_min_event_date,
+        recommender_max_event_date=args.recommender_max_event_date,
+        silver_min_date=silver_min_date,
+        silver_max_date=silver_max_date,
+    )
+    for dq_sql, dq_error in recommender_dq_checks(sql):
+        run_dq_check(connection, dq_sql, dq_error)
+
+    artifacts = [
+        ("gold_interaction_events", "gold_interaction_events", recommender_root / "interaction_events" / "interaction_events.csv"),
+        ("gold_user_item_splits", "gold_user_item_splits", recommender_root / "user_item_splits" / "user_item_splits.csv"),
+        ("gold_recommender_user_index", "gold_recommender_user_index", recommender_root / "user_index" / "user_index.csv"),
+        ("gold_recommender_item_index", "gold_recommender_item_index", recommender_root / "item_index" / "item_index.csv"),
+    ]
+    artifact_rows: dict[str, int] = {}
+    for artifact_name, table_name, artifact_path in artifacts:
+        row_count = copy_table_to_csv(connection, table_name, artifact_path, sql["copy_table_to_csv"], sql["count_rows"])
+        artifact_rows[artifact_name] = row_count
+        print(f"Wrote gold table: {artifact_path} ({row_count} rows)")
+
+    # Emit run metadata.
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "input": {"path": str(input_csv)},
+        "params": {
+            "build_engine": "recommender",
+            "split_version": args.split_version,
+            "recommender_min_event_date": args.recommender_min_event_date,
+            "recommender_max_event_date": args.recommender_max_event_date,
+        },
+        "quality": {"raw_total_rows": None, "raw_exact_duplicate_rows": None, "raw_bad_timestamp_rows": None, "raw_bad_timestamp_ratio": None},
+        "artifacts": {name: {"path": str(path), "rows": artifact_rows[name]} for name, _, path in artifacts},
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote run manifest: {manifest_path}")
+
+
+if __name__ == "__main__":
+    main()

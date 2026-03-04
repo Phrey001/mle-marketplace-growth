@@ -27,6 +27,7 @@ ALLOWED_FEATURE_LOOKBACK_WINDOWS = {60, 90, 120}
 
 
 def main() -> None:
+    # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Train propensity scoring models and backtest targeting policies.")
     parser.add_argument("--input-csv", default="data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2011-11-09/propensity_train_dataset.csv", help="Path to training dataset CSV")
     parser.add_argument("--output-dir", default="artifacts/purchase_propensity", help="Output directory for model and metrics")
@@ -37,6 +38,7 @@ def main() -> None:
     parser.add_argument("--calibration-method", choices=["none", "sigmoid", "isotonic"], default="sigmoid", help="Probability calibration method applied on train folds before validation scoring.")
     args = parser.parse_args()
 
+    # Validate key inputs and window settings.
     if not 0.0 < args.spend_cap_quantile <= 1.0: raise ValueError("--spend-cap-quantile must be in (0, 1]")
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
@@ -49,6 +51,7 @@ def main() -> None:
     purchase_label_column = f"label_purchase_{args.prediction_window_days}d"
     revenue_label_column = f"label_net_revenue_{args.prediction_window_days}d"
 
+    # Load strict 10/1/1 panel split and construct capped feature matrices.
     rows = _load_training_rows(input_path, feature_columns=feature_columns, purchase_label_column=purchase_label_column, revenue_label_column=revenue_label_column)
     train_rows, validation_rows, test_rows, split_description = _split_rows(rows)
     if not train_rows or not validation_rows or not test_rows: raise ValueError("Train/validation/test split produced an empty subset.")
@@ -67,6 +70,7 @@ def main() -> None:
     validation_matrix = vectorizer.transform([row["features"] for row in validation_rows])
     validation_labels = [int(row["purchase_label"]) for row in validation_rows]
 
+    # Train/compare propensity candidates on validation split.
     candidate_results = _fit_propensity_candidates(train_matrix, train_labels, validation_matrix, validation_labels, args.calibration_method)
     if args.force_propensity_model:
         forced = [row for row in candidate_results if row["model_name"] == args.force_propensity_model]
@@ -87,6 +91,7 @@ def main() -> None:
     validation_brier_score = float(brier_score_loss(validation_labels, validation_propensity_scores))
     validation_ece_10_bin = _expected_calibration_error(validation_labels, validation_propensity_scores.tolist(), bins=10)
 
+    # Train/compare conditional revenue models on validation positives.
     revenue_candidate_results, validation_revenue_predictions_by_candidate, selected_revenue_model_name, revenue_validation_quality = _fit_revenue_candidates(
         train_matrix,
         train_labels,
@@ -98,6 +103,7 @@ def main() -> None:
     )
     validation_revenue_predictions = validation_revenue_predictions_by_candidate[selected_revenue_model_name]
 
+    # Refit selected models on development (train+validation) and score test.
     development_rows = train_rows + validation_rows
     development_labels = [int(row["purchase_label"]) for row in development_rows]
     final_vectorizer = DictVectorizer(sparse=True)
@@ -140,9 +146,11 @@ def main() -> None:
             "mape_note": "MAPE excludes rows with zero actual revenue.",
         }
 
+    # Build policy scores for validation/test slices.
     test_expected_value_scores, test_random_scores, test_rfm_scores = _policy_scores(test_rows, test_propensity_scores.tolist(), test_predicted_conditional_revenue, args.feature_lookback_days)
     validation_expected_value_scores, validation_random_scores, validation_rfm_scores = _policy_scores(validation_rows, validation_propensity_scores.tolist(), validation_revenue_predictions, args.feature_lookback_days)
 
+    # Persist model, metrics, and scored outputs.
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = output_dir / "propensity_model.pkl"
