@@ -23,12 +23,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Create policy comparison chart for report assets.")
     parser.add_argument(
         "--initial-json",
-        default="artifacts/purchase_propensity/cycle_initial/offline_policy_budget_test.json",
+        default="artifacts/purchase_propensity/cycle_initial/offline_eval/offline_policy_budget_test.json",
         help="Cycle-initial budget policy test JSON",
     )
     parser.add_argument(
         "--retrain-json",
-        default="artifacts/purchase_propensity/cycle_retrain/offline_policy_budget_test.json",
+        default="artifacts/purchase_propensity/cycle_retrain/offline_eval/offline_policy_budget_test.json",
         help="Cycle-retrain budget policy test JSON",
     )
     parser.add_argument(

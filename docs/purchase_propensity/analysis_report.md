@@ -32,7 +32,7 @@ Method details are defined in `docs/purchase_propensity/spec.md`.
 Intended production-style cadence is quarterly rolling retraining; this demo executes one retrain cycle only to keep scope concise.
 
 **Observed run outputs** (artifact-derived, informational):
-- `cycle_initial/` and `cycle_retrain/` each include strict split predictions (`validation_predictions.csv`, `test_predictions.csv`), budget policy outputs, and output validation/interpretation files.
+- `cycle_initial/` and `cycle_retrain/` each group artifacts into `offline_eval/` (strict split predictions + policy outputs) and `report/` (validation summary + interpretation files).
 - Serving snapshot scoring writes `prediction_scores.csv` per cycle for operational targeting handoff; policy conclusions below are based on holdout outcomes.
 - Cycle mapping used in tables: `Cycle 1 (Initial) = snapshots 2009-12-01 to 2010-11-01`; `Cycle 2 (Retrain) = snapshots 2010-03-01 to 2011-02-01` (quarterly rolling setup with overlapping 12-month windows).
 
@@ -55,11 +55,11 @@ Sensitivity sweep context (to avoid misread vs Section 4):
 | Cycle 1 (Initial) | 90d | 0.730734 |
 
 Window outputs:
-- `artifacts/purchase_propensity/cycle_initial/window_sensitivity.json`
+- `artifacts/purchase_propensity/cycle_initial/offline_eval/window_sensitivity.json`
 
 Retrain cycle uses fixed structural settings from the initial freeze (`window_selection_mode=fixed`), so no structural re-search is required.
 
-![Initial Cycle Window Validation Dashboard](../../artifacts/purchase_propensity/cycle_initial/window_validation_dashboard.png)
+![Initial Cycle Window Validation Dashboard](../../artifacts/purchase_propensity/cycle_initial/offline_eval/window_validation_dashboard.png)
 
 ## 4) Frozen Model Quality Check (Validation Slice; Drift Signal Monitor)
 
@@ -119,8 +119,8 @@ Purchase Rate (Historical Realized):
 | Cycle 2 (Retrain) | 0.66 | 0.35 | 0.65 | +0.31 | +0.01 |
 
 Policy comparison details are stored in:
-- `artifacts/purchase_propensity/cycle_initial/offline_policy_budget_test.json`
-- `artifacts/purchase_propensity/cycle_retrain/offline_policy_budget_test.json`
+- `artifacts/purchase_propensity/cycle_initial/offline_eval/offline_policy_budget_test.json`
+- `artifacts/purchase_propensity/cycle_retrain/offline_eval/offline_policy_budget_test.json`
 
 ![Policy Comparison by Cycle](../../artifacts/purchase_propensity/report_assets/policy_comparison_cycles.png)
 

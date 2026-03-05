@@ -111,11 +111,12 @@ def main() -> None:
     # ===== Validate Inputs =====
     output_root = Path(args.output_root)
     artifacts_dir = Path(args.artifacts_dir)
+    offline_eval_dir = artifacts_dir / "offline_eval"
+    report_dir = artifacts_dir / "report"
     if not args.panel_end_date:
         raise ValueError("--panel-end-date is required")
     panel_end_date = date.fromisoformat(args.panel_end_date)
     train_as_of_dates = _generate_snapshot_dates(panel_end_date)
-    score_as_of_date = train_as_of_dates[-1]
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
@@ -138,10 +139,12 @@ def main() -> None:
             "Build them first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
             f"(example missing path: {missing_train_paths[0]})."
         )
+    temp_merged_csv: Path | None = None
     if len(train_paths) == 1:
         train_input_csv = train_paths[0]
     else:
-        train_input_csv = artifacts_dir / "_tmp" / "propensity_train_dataset_merged.csv"
+        temp_merged_csv = artifacts_dir / "_tmp" / "propensity_train_dataset_merged.csv"
+        train_input_csv = temp_merged_csv
         _merge_train_datasets(train_paths, train_input_csv)
 
     # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
@@ -154,11 +157,11 @@ def main() -> None:
             "--events-csv",
             output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv",
             "--output-json",
-            artifacts_dir / "window_sensitivity.json",
+            offline_eval_dir / "window_sensitivity.json",
             "--output-plot",
-            artifacts_dir / "window_validation_dashboard.png",
+            offline_eval_dir / "window_validation_dashboard.png",
         )
-        window_sensitivity_output = json.loads((artifacts_dir / "window_sensitivity.json").read_text(encoding="utf-8"))
+        window_sensitivity_output = json.loads((offline_eval_dir / "window_sensitivity.json").read_text(encoding="utf-8"))
         freeze_decision = window_sensitivity_output["freeze_decision"]
         frozen_prediction_window_days = int(freeze_decision["selected_prediction_window_days"])
         frozen_feature_lookback_days = int(freeze_decision["selected_feature_lookback_days"])
@@ -180,12 +183,12 @@ def main() -> None:
             f"propensity_model={frozen_propensity_model}",
         )
 
-    # ===== Train + Predict + Evaluate =====
+    # ===== Train + Offline Evaluate =====
     train_args: list[str | Path | int] = [
         "--input-csv",
         train_input_csv,
         "--output-dir",
-        artifacts_dir,
+        offline_eval_dir,
         "--prediction-window-days",
         frozen_prediction_window_days,
         "--feature-lookback-days",
@@ -193,38 +196,10 @@ def main() -> None:
     ]
     if frozen_propensity_model: train_args.extend(["--force-propensity-model", frozen_propensity_model])
     _run_module("mle_marketplace_growth.purchase_propensity.train", *train_args)
-
-    user_features_path = (
-        output_root
-        / "gold"
-        / "feature_store"
-        / "purchase_propensity"
-        / "user_features_asof"
-        / f"as_of_date={score_as_of_date}"
-        / "user_features_asof.csv"
-    )
-    if not user_features_path.exists():
-        raise FileNotFoundError(
-            "Missing prebuilt user features for scoring. "
-            "Build gold first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
-            f"(expected path: {user_features_path})."
-        )
-    model_path = artifacts_dir / "propensity_model.pkl"
-    prediction_scores_path = artifacts_dir / "prediction_scores.csv"
-    validation_predictions_path = artifacts_dir / "validation_predictions.csv"
-    test_predictions_path = artifacts_dir / "test_predictions.csv"
-    budget_eval_validation_json_path = artifacts_dir / "offline_policy_budget_validation.json"
-    budget_eval_test_json_path = artifacts_dir / "offline_policy_budget_test.json"
-
-    _run_module(
-        "mle_marketplace_growth.purchase_propensity.predict",
-        "--input-csv",
-        user_features_path,
-        "--model-path",
-        model_path,
-        "--output-csv",
-        prediction_scores_path,
-    )
+    validation_predictions_path = offline_eval_dir / "validation_predictions.csv"
+    test_predictions_path = offline_eval_dir / "test_predictions.csv"
+    budget_eval_validation_json_path = offline_eval_dir / "offline_policy_budget_validation.json"
+    budget_eval_test_json_path = offline_eval_dir / "offline_policy_budget_test.json"
 
     # ===== Offline Policy Evaluation (Validation + Test) =====
     policy_eval_args = [
@@ -254,9 +229,9 @@ def main() -> None:
         *policy_eval_args,
     )
     # ===== Validation + Interpretation =====
-    summary_path = artifacts_dir / "output_validation_summary.json"
+    summary_path = report_dir / "output_validation_summary.json"
     passed, summary = run_validation(
-        artifacts_dir=artifacts_dir,
+        artifacts_dir=offline_eval_dir,
         expect_window_sensitivity=expect_window_sensitivity,
         output_json=summary_path,
     )
@@ -264,8 +239,16 @@ def main() -> None:
         failed = [row for row in summary["checks"] if not row["passed"]]
         raise ValueError(f"Automated artifact validation failed: {failed}")
     print(f"Wrote output validation summary: {summary_path}")
-    interpretation_path = write_interpretation(artifacts_dir=artifacts_dir, expect_window_sensitivity=expect_window_sensitivity)
+    interpretation_path = write_interpretation(
+        artifacts_dir=offline_eval_dir,
+        output_md=report_dir / "output_interpretation.md",
+        expect_window_sensitivity=expect_window_sensitivity,
+    )
     print(f"Wrote output interpretation: {interpretation_path}")
+    if temp_merged_csv and temp_merged_csv.exists():
+        temp_merged_csv.unlink()
+        if temp_merged_csv.parent.exists() and not any(temp_merged_csv.parent.iterdir()):
+            temp_merged_csv.parent.rmdir()
 
 
 if __name__ == "__main__":

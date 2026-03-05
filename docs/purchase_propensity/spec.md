@@ -48,9 +48,9 @@ Expected value in this repo:
 | Stage | Script | Key output(s) |
 |---|---|---|
 | Feature-store build | `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` | 12 snapshot partitions of `propensity_train_dataset`, `user_features_asof` |
-| Model training | `mle_marketplace_growth.purchase_propensity.train` | `propensity_model.pkl`, `train_metrics.json`, `validation_predictions.csv`, `test_predictions.csv` |
-| Structural sensitivity (initial cycle) | `mle_marketplace_growth.purchase_propensity.window_sensitivity` | `window_sensitivity.json`, `window_validation_dashboard.png` |
-| Policy backtest | `mle_marketplace_growth.purchase_propensity.policy_budget_evaluation` | `offline_policy_budget_validation.json`, `offline_policy_budget_test.json` |
+| Model training | `mle_marketplace_growth.purchase_propensity.train` | `offline_eval/propensity_model.pkl`, `offline_eval/train_metrics.json`, `offline_eval/validation_predictions.csv`, `offline_eval/test_predictions.csv` |
+| Structural sensitivity (initial cycle) | `mle_marketplace_growth.purchase_propensity.window_sensitivity` | `offline_eval/window_sensitivity.json`, `offline_eval/window_validation_dashboard.png` |
+| Policy backtest | `mle_marketplace_growth.purchase_propensity.policy_budget_evaluation` | `offline_eval/offline_policy_budget_validation.json`, `offline_eval/offline_policy_budget_test.json` |
 | Serving snapshot scoring | `mle_marketplace_growth.purchase_propensity.predict` | `prediction_scores.csv` |
 
 ## Current Pipeline
@@ -94,10 +94,10 @@ Training outputs:
 
 | Artifact | Purpose |
 |---|---|
-| `artifacts/purchase_propensity/propensity_model.pkl` | Trained model bundle |
-| `artifacts/purchase_propensity/train_metrics.json` | Model metrics + out-of-time quality KPIs |
-| `artifacts/purchase_propensity/validation_predictions.csv` | Validation-slice predictions with ML/random/RFM policy scores |
-| `artifacts/purchase_propensity/test_predictions.csv` | Test-slice predictions with ML/random/RFM policy scores |
+| `artifacts/purchase_propensity/<cycle>/offline_eval/propensity_model.pkl` | Trained model bundle |
+| `artifacts/purchase_propensity/<cycle>/offline_eval/train_metrics.json` | Model metrics + out-of-time quality KPIs |
+| `artifacts/purchase_propensity/<cycle>/offline_eval/validation_predictions.csv` | Validation-slice predictions with ML/random/RFM policy scores |
+| `artifacts/purchase_propensity/<cycle>/offline_eval/test_predictions.csv` | Test-slice predictions with ML/random/RFM policy scores |
 
 Out-of-time quality KPIs captured in `train_metrics.json`:
 - ROC-AUC
@@ -129,8 +129,8 @@ Execution + artifacts:
 | Policy-eval script | `src/mle_marketplace_growth/purchase_propensity/policy_budget_evaluation.py` |
 | Inputs | `validation_predictions.csv` / `test_predictions.csv` |
 | Allocation rule | Equal `Top-K` by budget (`K = floor(budget / cost_per_user)`) |
-| Policy outputs | `offline_policy_budget_validation.json`, `offline_policy_budget_test.json` |
-| Validation/report outputs | `output_validation_summary.json`, `output_interpretation.md` |
+| Policy outputs | `offline_eval/offline_policy_budget_validation.json`, `offline_eval/offline_policy_budget_test.json` |
+| Validation/report outputs | `report/output_validation_summary.json`, `report/output_interpretation.md` |
 
 Executable commands are documented in `docs/purchase_propensity/quickstart.md`.
 
@@ -140,7 +140,7 @@ Executable commands are documented in `docs/purchase_propensity/quickstart.md`.
 |---|---|
 | Script | `src/mle_marketplace_growth/purchase_propensity/predict.py` |
 | Input | `user_features_asof.csv` + `propensity_model.pkl` |
-| Output | `artifacts/purchase_propensity/prediction_scores.csv` |
+| Output | `artifacts/purchase_propensity/serving_batch/as_of_date=YYYY-MM-DD/prediction_scores.csv` |
 | Purpose | Operational ranked list for user-level targeting handoff (not a holdout evaluation artifact) |
 
 ## Split and Window Contract
@@ -159,8 +159,8 @@ Window and cadence:
   - `fixed`: use config-provided structural choices directly (no reopen of structural search).
 
 Window sensitivity outputs:
-- `artifacts/purchase_propensity/window_sensitivity.json`
-- `window_validation_dashboard.png` (PR-AUC, top-decile lift, Brier, ECE visual summary)
+- `artifacts/purchase_propensity/<cycle>/offline_eval/window_sensitivity.json`
+- `artifacts/purchase_propensity/<cycle>/offline_eval/window_validation_dashboard.png` (PR-AUC, top-decile lift, Brier, ECE visual summary)
 - includes inter-purchase gap distribution and prediction/lookback validation summaries
 
 How to read window-sensitivity metrics (concise):

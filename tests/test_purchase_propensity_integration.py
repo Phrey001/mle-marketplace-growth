@@ -186,19 +186,20 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             )
 
             # Assert: core train/eval/sensitivity artifacts are populated and coherent.
-            train_metrics = json.loads((artifacts_root / "train_metrics.json").read_text(encoding="utf-8"))
+            offline_eval = artifacts_root / "offline_eval"
+            train_metrics = json.loads((offline_eval / "train_metrics.json").read_text(encoding="utf-8"))
             self.assertIn(train_metrics["selected_model_name"], {"logistic_regression", "xgboost"})
             self.assertEqual(train_metrics["calibration_method"], "sigmoid")
             self.assertGreater(train_metrics["spend_cap_value"], 0)
             self.assertGreater(train_metrics["validation_quality"]["top_decile_lift"], 0)
             self.assertGreater(train_metrics["test_quality"]["top_decile_lift"], 0)
             self.assertGreater(train_metrics["test_rows"], 0)
-            budget_eval_validation = json.loads((artifacts_root / "offline_policy_budget_validation.json").read_text(encoding="utf-8"))
+            budget_eval_validation = json.loads((offline_eval / "offline_policy_budget_validation.json").read_text(encoding="utf-8"))
             self.assertEqual(len(budget_eval_validation["policy_comparison"]), 3)
-            budget_eval_test = json.loads((artifacts_root / "offline_policy_budget_test.json").read_text(encoding="utf-8"))
+            budget_eval_test = json.loads((offline_eval / "offline_policy_budget_test.json").read_text(encoding="utf-8"))
             self.assertEqual(len(budget_eval_test["policy_comparison"]), 3)
 
-            sensitivity = json.loads((artifacts_root / "window_sensitivity.json").read_text(encoding="utf-8"))
+            sensitivity = json.loads((offline_eval / "window_sensitivity.json").read_text(encoding="utf-8"))
             self.assertEqual([row["window_days"] for row in sensitivity["window_sensitivity"]], [30, 60, 90])
             self.assertTrue(sensitivity["prediction_window_validation"])
             self.assertEqual(
