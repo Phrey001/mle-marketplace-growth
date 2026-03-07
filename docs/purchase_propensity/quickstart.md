@@ -32,6 +32,7 @@ Current implementation note:
 - Purchase propensity offline train/eval uses strict 12-snapshot panel assembly and policy-budget evaluation.
 - That orchestration is packaged in `run_pipeline` for this engine (this is why the command may look broader than a thin train-only wrapper).
 - Inside `run_pipeline`, policy evaluation runs before final artifact validation checks.
+- `validate_outputs` is core in this flow and runs automatically inside `run_pipeline` (standalone validator invocation is only for manual debug/recovery).
 
 ```bash
 # Cycle 1 offline train/eval/validate convenience wrapper
@@ -41,18 +42,16 @@ PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline --config configs/purchase_propensity/cycle_retrain.yaml
 ```
 
-Validation terminology in this step:
-- Model validation: quality metrics on the validation slice are produced during `train` and written to `train_metrics.json`.
-- Policy evaluation: offline ML/Random/RFM comparison on validation/test slices is produced by `policy_budget_evaluation`.
-- Artifact validation: final contract/sanity checks from `validate_outputs` over generated artifacts (including policy outputs).
+Contract details (split/model/policy/artifact/acceptance): `docs/purchase_propensity/spec.md`.
 
 Optional (explicit structural search run used by cycle 1 sensitivity mode):
 
 ```bash
 # Run window sensitivity directly (standalone)
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.window_sensitivity \
-  --input-csv artifacts/purchase_propensity/cycle_initial/_tmp/propensity_train_dataset_merged.csv \
-  --events-csv data/silver/transactions_line_items/transactions_line_items.csv \
+  --panel-root data/gold/feature_store/purchase_propensity/propensity_train_dataset \
+  --panel-end-date 2010-11-01 \
+  --events-path data/silver/transactions_line_items/transactions_line_items.parquet \
   --output-json artifacts/purchase_propensity/cycle_initial/offline_eval/window_sensitivity.json \
   --output-plot artifacts/purchase_propensity/cycle_initial/offline_eval/window_validation_dashboard.png
 ```
@@ -69,13 +68,13 @@ PYTHONPATH=src python scripts/report_policy_comparison_chart.py
 ```bash
 # Score latest cycle 1 snapshot with frozen model artifact
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict \
-  --input-csv data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2010-11-01/user_features_asof.csv \
+  --input-path data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2010-11-01/user_features_asof.parquet \
   --model-path artifacts/purchase_propensity/cycle_initial/offline_eval/propensity_model.pkl \
   --output-csv artifacts/purchase_propensity/serving_batch/as_of_date=2010-11-01/prediction_scores.csv
 
 # Score latest cycle 2 snapshot with frozen model artifact
 PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict \
-  --input-csv data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-02-01/user_features_asof.csv \
+  --input-path data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-02-01/user_features_asof.parquet \
   --model-path artifacts/purchase_propensity/cycle_retrain/offline_eval/propensity_model.pkl \
   --output-csv artifacts/purchase_propensity/serving_batch/as_of_date=2011-02-01/prediction_scores.csv
 ```
@@ -95,7 +94,6 @@ Notes:
 | Gold dependency | ML pipeline consumes prebuilt purchase-propensity gold snapshots from `build_gold_purchase_propensity` |
 | Artifact folder default | `--config cycle_initial.yaml` maps to `artifacts/purchase_propensity/cycle_initial` (same for retrain); override with `--artifacts-dir` only when needed |
 | Date validation | Cycle dates are validated against shared silver event-date bounds |
-| Design reference | `docs/purchase_propensity/spec.md` |
 | Artifact layout | Stage-2 outputs are grouped by purpose: `offline_eval/` (train/policy artifacts) and `report/` (validation summary + interpretation) |
 
 Optional clean rebuild:

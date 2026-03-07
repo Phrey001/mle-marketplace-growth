@@ -63,7 +63,7 @@ Grain: one row per interaction event with assigned split.
 | `event_ts` | Yes | string (timestamp format) | No | Event timestamp | from `gold_interaction_events` | `2009-12-01 07:45:00` |
 | `event_date` | No | string (date format) | No | Event date | from `gold_interaction_events` | `2009-12-01` |
 | `weight` | No | int | No | Interaction weight | from `gold_interaction_events` | `24` |
-| `split_version` | Yes | string | No | Version identifier for split strategy | CLI `--split-version` | `time_rank_v1` |
+| `split_version` | Yes | string | No | Fixed split strategy/version identifier | hardcoded in SQL | `time_rank_v1` |
 | `split` | Yes | enum(`train`,`val`,`test`) | No | Time-based split assignment per user | latest=`test`, second-latest=`val`, else=`train` | `train` |
 
 ---

@@ -1,4 +1,4 @@
-"""Shared silver bootstrap and CLI for feature-store builds."""
+"""Build the shared silver layer from raw source data."""
 
 import argparse
 import json
@@ -7,97 +7,98 @@ from pathlib import Path
 
 import duckdb
 
-from .build_helpers import REQUIRED_SOURCE_COLUMNS, copy_table_to_csv, load_sql_assets, load_yaml_defaults, sql_quote
+from .build_helpers import copy_table_to_parquet, load_sql_assets, load_yaml_defaults
+
+BAD_TS_THRESHOLD = 0.01
 
 
-def bootstrap_silver(connection: duckdb.DuckDBPyConnection, *, build_shared: bool, input_csv: Path, silver_path: Path, sql: dict[str, str], bad_ts_threshold: float) -> dict[str, float | int]:
-    total_rows = bad_rows = exact_duplicate_rows = 0
-    bad_ratio = 0.0
+def _sql_quote(value: str) -> str:
+    """Escape single quotes in SQL path/file literals (not row content)."""
+    return value.replace("'", "''")
 
-    # Shared silver build path: read raw source, run quality checks, materialize silver.
-    if build_shared:
-        create_raw_source_sql = sql["create_raw_source"].replace("{input_csv}", sql_quote(str(input_csv)))
-        connection.execute(create_raw_source_sql)
 
-        source_schema = connection.execute(sql["describe_raw_source"]).fetchall()
-        available_columns = {row[0] for row in source_schema}
-        missing_columns = sorted(REQUIRED_SOURCE_COLUMNS - available_columns)
-        if missing_columns:
-            raise ValueError(f"Missing required source columns: {missing_columns}")
+def bootstrap_silver(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    input_csv: Path,
+    sql: dict[str, str],
+) -> dict[str, float | int]:
+    """Load raw data, run DQ checks, and materialize canonical silver table."""
+    required_source_columns = {"Invoice", "StockCode", "Description", "Quantity", "InvoiceDate", "Price", "Customer ID", "Country"}
+    create_raw_source_sql = sql["create_raw_source"].replace("{input_csv}", _sql_quote(str(input_csv)))
+    connection.execute(create_raw_source_sql)
 
-        timestamp_quality = connection.execute(sql["raw_bad_timestamp_counts"]).fetchone()
-        total_rows = int(timestamp_quality[0] or 0)
-        bad_rows = int(timestamp_quality[1] or 0)
-        exact_duplicate_rows = int(connection.execute(sql["raw_exact_duplicate_rows"]).fetchone()[0] or 0)
-        bad_ratio = (bad_rows / total_rows) if total_rows else 0.0
-        if bad_ratio > bad_ts_threshold:
-            raise ValueError(f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {bad_ts_threshold:.4f}")
-        connection.execute(sql["silver_transactions_line_items"])
-        return {
-            "raw_total_rows": total_rows,
-            "raw_exact_duplicate_rows": exact_duplicate_rows,
-            "raw_bad_timestamp_rows": bad_rows,
-            "raw_bad_timestamp_ratio": bad_ratio,
-        }
+    # DQ 1: fail fast if source schema misses required columns.
+    available_columns = {row[0] for row in connection.execute(sql["describe_raw_source"]).fetchall()}
+    missing_columns = sorted(required_source_columns - available_columns)
+    if missing_columns:
+        raise ValueError(f"Missing required source columns: {missing_columns}")
 
-    # Reuse path: load prebuilt silver CSV into DuckDB and normalize schema.
-    if not silver_path.exists():
-        raise FileNotFoundError(f"Shared silver CSV not found: {silver_path}. Run feature_store.build_shared_silver first.")
-    create_silver_from_csv_sql = sql["create_silver_from_shared_csv"].replace("{silver_csv}", sql_quote(str(silver_path)))
-    connection.execute(create_silver_from_csv_sql)
+    # DQ 2: fail fast when unparsable timestamp ratio exceeds threshold.
+    total_rows, bad_rows = connection.execute(sql["raw_bad_timestamp_counts"]).fetchone()
+    total_rows = int(total_rows or 0)
+    bad_rows = int(bad_rows or 0)
+    bad_ratio = (bad_rows / total_rows) if total_rows else 0.0
+    if bad_ratio > BAD_TS_THRESHOLD:
+        raise ValueError(f"Timestamp parse failure ratio {bad_ratio:.4f} exceeded threshold {BAD_TS_THRESHOLD:.4f}")
+
     connection.execute(sql["silver_transactions_line_items"])
-    return {"raw_total_rows": 0, "raw_exact_duplicate_rows": 0, "raw_bad_timestamp_rows": 0, "raw_bad_timestamp_ratio": 0.0}
+
+    # DQ 3: enforce canonical silver grain uniqueness (blocking).
+    silver_duplicate_grain_rows = int(connection.execute(sql["silver_duplicate_grain_rows"]).fetchone()[0] or 0)
+    if silver_duplicate_grain_rows > 0:
+        raise ValueError(
+            "DQ_SILVER_001 failed: duplicate rows at silver grain "
+            "(invoice_id, item_id, event_ts) in silver_transactions_line_items"
+        )
+    return {
+        "raw_total_rows": total_rows,
+        "raw_bad_timestamp_rows": bad_rows,
+        "raw_bad_timestamp_ratio": bad_ratio,
+        "silver_duplicate_grain_rows": silver_duplicate_grain_rows,
+    }
 
 
 def main() -> None:
-    # Parse CLI + config defaults.
+    """Parse args/config, build shared silver, and emit run manifest."""
     parser = argparse.ArgumentParser(description="Build shared silver feature-store layer.")
     parser.add_argument("--shared-config", required=True, help="Shared YAML config file")
-    parser.add_argument("--input-csv", default=None, help="Path to raw Online Retail II CSV")
-    parser.add_argument("--output-root", default=None, help="Output root path for silver/gold materializations")
-    parser.add_argument("--bad-ts-threshold", type=float, default=None, help="Maximum tolerated ratio of rows with unparsable InvoiceDate before failing")
     args = parser.parse_args()
-    cfg = load_yaml_defaults(args.shared_config, "Shared config").get
-    args.input_csv = args.input_csv or cfg("input_csv", "data/bronze/online_retail_ii/raw.csv")
-    args.output_root = args.output_root or cfg("output_root", "data")
-    args.bad_ts_threshold = float(args.bad_ts_threshold if args.bad_ts_threshold is not None else 0.01)
 
-    # Resolve paths + load SQL assets.
+    cfg = load_yaml_defaults(args.shared_config, "Shared config").get
+    args.input_csv = cfg("input_csv", "data/bronze/online_retail_ii/raw.csv")
+    args.output_root = cfg("output_root", "data")
+
     input_csv = Path(args.input_csv)
     if not input_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
     output_root = Path(args.output_root)
-    silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"
-    gold_root = output_root / "gold" / "feature_store"
-    manifest_path = gold_root / "_meta" / "run_manifest.json"
+    silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet"
+    shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
+    manifest_path = output_root / "silver" / "_meta" / "run_manifest.json"
     sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
 
-    # Execute shared silver build.
-    connection = duckdb.connect(database=":memory:")
-    quality = bootstrap_silver(
-        connection,
-        build_shared=True,
-        input_csv=input_csv,
-        silver_path=silver_path,
-        sql=sql,
-        bad_ts_threshold=args.bad_ts_threshold,
-    )
-    row_count = copy_table_to_csv(connection, "silver_transactions_line_items", silver_path, sql["copy_table_to_csv"], sql["count_rows"])
+    shared_db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = duckdb.connect(database=str(shared_db_path))
+    quality = bootstrap_silver(connection, input_csv=input_csv, sql=sql)
+    row_count = copy_table_to_parquet(connection, "silver_transactions_line_items", silver_path, sql["count_rows"])
     print(f"Wrote silver table: {silver_path} ({row_count} rows)")
 
-    # Emit run metadata.
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "input": {"path": str(input_csv)},
-        "params": {"build_engine": "shared", "bad_ts_threshold": args.bad_ts_threshold},
+        "params": {"build_engine": "shared", "bad_ts_threshold": BAD_TS_THRESHOLD},
         "quality": {
             "raw_total_rows": quality["raw_total_rows"],
-            "raw_exact_duplicate_rows": quality["raw_exact_duplicate_rows"],
             "raw_bad_timestamp_rows": quality["raw_bad_timestamp_rows"],
             "raw_bad_timestamp_ratio": round(float(quality["raw_bad_timestamp_ratio"]), 6),
+            "silver_duplicate_grain_rows": quality["silver_duplicate_grain_rows"],
         },
-        "artifacts": {"silver_transactions_line_items": {"path": str(silver_path), "rows": row_count}},
+        "artifacts": {
+            "silver_transactions_line_items": {"path": str(silver_path), "rows": row_count},
+            "shared_db": {"path": str(shared_db_path)},
+        },
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote run manifest: {manifest_path}")

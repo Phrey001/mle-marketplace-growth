@@ -24,27 +24,35 @@ from mle_marketplace_growth.purchase_propensity.helpers.modeling import _build_m
 
 ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
 ALLOWED_FEATURE_LOOKBACK_WINDOWS = {60, 90, 120}
+SPEND_CAP_QUANTILE = 0.99
+CALIBRATION_METHOD = "sigmoid"
 
 
 def main() -> None:
     # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Train propensity scoring models and backtest targeting policies.")
-    parser.add_argument("--input-csv", default="data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2011-11-09/propensity_train_dataset.csv", help="Path to training dataset CSV")
+    parser.add_argument(
+        "--input-path",
+        action="append",
+        default=None,
+        help="Path to training dataset parquet (repeat --input-path for multi-snapshot panel)",
+    )
     parser.add_argument("--output-dir", default="artifacts/purchase_propensity", help="Output directory for model and metrics")
-    parser.add_argument("--spend-cap-quantile", type=float, default=0.99, help="Quantile cap for monetary_90d to reduce extreme-spend dominance (0 < q <= 1).")
     parser.add_argument("--prediction-window-days", type=int, default=30, help="Prediction horizon for purchase/revenue labels: 30, 60, 90")
     parser.add_argument("--feature-lookback-days", type=int, default=90, help="Feature lookback profile: 60, 90, 120")
     parser.add_argument("--force-propensity-model", choices=["logistic_regression", "xgboost"], default=None, help="Optional frozen propensity model from sensitivity validation.")
-    parser.add_argument("--calibration-method", choices=["none", "sigmoid", "isotonic"], default="sigmoid", help="Probability calibration method applied on train folds before validation scoring.")
     args = parser.parse_args()
 
     # Validate key inputs and window settings.
-    if not 0.0 < args.spend_cap_quantile <= 1.0: raise ValueError("--spend-cap-quantile must be in (0, 1]")
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
 
-    input_path = Path(args.input_csv)
-    if not input_path.exists(): raise FileNotFoundError(f"Input CSV not found: {input_path}")
+    input_paths = [Path(path) for path in args.input_path] if args.input_path else [
+        Path("data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2011-11-09/propensity_train_dataset.parquet")
+    ]
+    missing_inputs = [path for path in input_paths if not path.exists()]
+    if missing_inputs:
+        raise FileNotFoundError(f"Input path not found: {missing_inputs[0]}")
 
     feature_columns = _feature_columns(args.feature_lookback_days)
     spend_feature = f"monetary_{args.feature_lookback_days}d"
@@ -52,14 +60,19 @@ def main() -> None:
     revenue_label_column = f"label_net_revenue_{args.prediction_window_days}d"
 
     # Load strict 10/1/1 panel split and construct capped feature matrices.
-    rows = _load_training_rows(input_path, feature_columns=feature_columns, purchase_label_column=purchase_label_column, revenue_label_column=revenue_label_column)
+    rows = _load_training_rows(
+        input_paths,
+        feature_columns=feature_columns,
+        purchase_label_column=purchase_label_column,
+        revenue_label_column=revenue_label_column,
+    )
     train_rows, validation_rows, test_rows, split_description = _split_rows(rows)
     if not train_rows or not validation_rows or not test_rows: raise ValueError("Train/validation/test split produced an empty subset.")
 
     train_labels = [int(row["purchase_label"]) for row in train_rows]
     if len(set(train_labels)) < 2: raise ValueError("Training labels contain only one class. Try an earlier as_of_date.")
 
-    spend_cap_value = _quantile([float(row["features"][spend_feature]) for row in train_rows], args.spend_cap_quantile)
+    spend_cap_value = _quantile([float(row["features"][spend_feature]) for row in train_rows], SPEND_CAP_QUANTILE)
     _apply_spend_cap(train_rows, spend_feature, spend_cap_value)
     _apply_spend_cap(validation_rows, spend_feature, spend_cap_value)
     _apply_spend_cap(test_rows, spend_feature, spend_cap_value)
@@ -71,7 +84,7 @@ def main() -> None:
     validation_labels = [int(row["purchase_label"]) for row in validation_rows]
 
     # Train/compare propensity candidates on validation split.
-    candidate_results = _fit_propensity_candidates(train_matrix, train_labels, validation_matrix, validation_labels, args.calibration_method)
+    candidate_results = _fit_propensity_candidates(train_matrix, train_labels, validation_matrix, validation_labels, CALIBRATION_METHOD)
     if args.force_propensity_model:
         forced = [row for row in candidate_results if row["model_name"] == args.force_propensity_model]
         if not forced: raise ValueError(f"Forced propensity model not found in candidates: {args.force_propensity_model}")
@@ -119,7 +132,7 @@ def main() -> None:
         test_rows,
         selected_model_name,
         selected_revenue_model_name,
-        args.calibration_method,
+        CALIBRATION_METHOD,
     )
 
     test_labels = [int(row["purchase_label"]) for row in test_rows]
@@ -169,8 +182,8 @@ def main() -> None:
                 "revenue_fallback_value": round(float(revenue_fallback_value), 6),
                 "feature_columns": feature_columns,
                 "spend_cap_value": float(spend_cap_value),
-                "spend_cap_quantile": float(args.spend_cap_quantile),
-                "calibration_method": args.calibration_method,
+                "spend_cap_quantile": float(SPEND_CAP_QUANTILE),
+                "calibration_method": CALIBRATION_METHOD,
                 "prediction_window_days": args.prediction_window_days,
                 "feature_lookback_days": args.feature_lookback_days,
                 "target_definition": f"purchase_in_next_{args.prediction_window_days}_days",
@@ -182,15 +195,15 @@ def main() -> None:
     metrics_path.write_text(
         json.dumps(
             {
-                "input_csv": str(input_path),
+                "input_paths": [str(path) for path in input_paths],
                 "target_definition": purchase_label_column,
                 "revenue_backtest_label": revenue_label_column,
                 "prediction_window_days": args.prediction_window_days,
                 "feature_lookback_days": args.feature_lookback_days,
                 "validation_split_description": split_description,
-                "spend_cap_quantile": args.spend_cap_quantile,
+                "spend_cap_quantile": SPEND_CAP_QUANTILE,
                 "spend_cap_value": round(float(spend_cap_value), 6),
-                "calibration_method": args.calibration_method,
+                "calibration_method": CALIBRATION_METHOD,
                 "revenue_model_name": revenue_model_name,
                 "revenue_fallback_value": round(float(revenue_fallback_value), 6),
                 "train_rows": len(train_rows),

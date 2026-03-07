@@ -1,6 +1,5 @@
-# Paths + split window (applies to full recommender pipeline)
+# Paths + event window (applies to full recommender pipeline)
 artifacts_dir: "artifacts/recommender" # output folder for all recommender artifacts
-split_version: "time_rank_v1" # split strategy label written into feature-store split table
 recommender_min_event_date: "2010-12-01" # lower bound for interaction events used by all models
 recommender_max_event_date: "2011-11-30" # upper bound for interaction events used by all models
 
@@ -13,24 +12,16 @@ batch_size: 4096 # good CPU throughput without high memory pressure
 l2_reg: 0.0001 # light regularization
 max_grad_norm: 1.0 # gradient clipping (0 disables clipping)
 early_stop_rounds: 4 # stop after this many non-improving epochs
-early_stop_metric: "val_recall_at_k" # use validation Recall@K ("loss" is available for debugging)
 early_stop_k: 20 # K used for early-stop metric
 early_stop_tolerance: 0.0001 # minimum improvement to count as progress
 temperature: 0.7 # softmax sharpening
-normalize_embeddings: 1 # cosine-style scoring (1=yes, 0=no)
 tower_hidden_dim: 0 # embedding-only towers; set >0 to enable MLP towers experimentally
 tower_dropout: 0.0 # applies only when tower_hidden_dim > 0
-device: "auto" # auto-selects cuda when available, else falls back to cpu
 
 # MF baseline params (TruncatedSVD baseline only)
 mf_components: 64 # stronger than 32 while still fast
 mf_n_iter: 15 # stable SVD fit for this demo scale
 mf_weighting: "tfidf" # downweights head items
-mf_algorithm: "randomized" # faster than arpack for this workflow
-mf_tol: 0.0 # used only by arpack
-
-# Popularity baseline params (popularity baseline only)
-popularity_transform: "log1p" # reduces head-item dominance
 
 # Evaluation + serving params (applies after model training)
 top_k: 20 # serving depth for candidate retrieval

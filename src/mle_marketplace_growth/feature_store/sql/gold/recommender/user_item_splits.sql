@@ -20,7 +20,7 @@ SELECT
   event_ts,
   event_date,
   weight,
-  '{split_version}' AS split_version,
+  'time_rank_v1' AS split_version,
   CASE
     WHEN recency_rank = 1 THEN 'test'
     WHEN recency_rank = 2 THEN 'val'

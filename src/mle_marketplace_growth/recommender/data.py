@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-import csv
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import duckdb
+
+
+def _read_rows(path: Path) -> list[dict]:
+    connection = duckdb.connect(database=":memory:")
+    try:
+        cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(path)])
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    finally:
+        connection.close()
+
 
 def _load_split_rows(path: Path) -> list[dict]:
-    with path.open("r", encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
-    if not rows: raise ValueError(f"No rows found in split CSV: {path}")
+    rows = _read_rows(path)
+    if not rows: raise ValueError(f"No rows found in split dataset: {path}")
     required = {"user_id", "item_id", "split", "event_ts"}
     missing = sorted(required - set(rows[0].keys()))
-    if missing: raise ValueError(f"Missing required columns in split CSV: {missing}")
+    if missing: raise ValueError(f"Missing required columns in split dataset: {missing}")
     return rows
 
 
@@ -63,21 +73,20 @@ def _build_interactions(rows: list[dict]) -> tuple[dict[str, set[str]], dict[str
 
 
 def _load_entity_index(path: Path, id_col: str, idx_col: str) -> tuple[list[str], dict[str, int]]:
-    if not path.exists(): raise FileNotFoundError(f"Entity index CSV not found: {path}")
-    with path.open("r", encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
-    if not rows: raise ValueError(f"No rows found in entity index CSV: {path}")
+    if not path.exists(): raise FileNotFoundError(f"Entity index file not found: {path}")
+    rows = _read_rows(path)
+    if not rows: raise ValueError(f"No rows found in entity index file: {path}")
     required = {id_col, idx_col}
     missing = sorted(required - set(rows[0].keys()))
-    if missing: raise ValueError(f"Missing required columns in entity index CSV {path}: {missing}")
+    if missing: raise ValueError(f"Missing required columns in entity index file {path}: {missing}")
 
     idx_to_id: dict[int, str] = {}
     id_to_idx: dict[str, int] = {}
     for row in rows:
         entity_id = row[id_col]
         entity_idx = int(row[idx_col])
-        if entity_id in id_to_idx: raise ValueError(f"Duplicate entity id in index CSV {path}: {entity_id}")
-        if entity_idx in idx_to_id: raise ValueError(f"Duplicate entity idx in index CSV {path}: {entity_idx}")
+        if entity_id in id_to_idx: raise ValueError(f"Duplicate entity id in index file {path}: {entity_id}")
+        if entity_idx in idx_to_id: raise ValueError(f"Duplicate entity idx in index file {path}: {entity_idx}")
         id_to_idx[entity_id] = entity_idx
         idx_to_id[entity_idx] = entity_id
 

@@ -13,6 +13,12 @@ from mle_marketplace_growth.recommender.data import _build_interactions, _load_e
 from mle_marketplace_growth.recommender.eval import _evaluate_model, _user_eval_pool  # re-exported for existing tests/imports
 from mle_marketplace_growth.recommender.models import _popularity_scores, _train_mf, _train_two_tower
 
+EARLY_STOP_METRIC = "val_recall_at_k"
+NORMALIZE_EMBEDDINGS = True
+DEVICE = "auto"
+MF_ALGORITHM = "randomized"
+POPULARITY_TRANSFORM = "log1p"
+
 
 def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
@@ -22,9 +28,9 @@ def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
 def main() -> None:
     # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Train recommender retrieval models.")
-    parser.add_argument("--splits-csv", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv", help="Path to user_item_splits.csv")
-    parser.add_argument("--user-index-csv", default="data/gold/feature_store/recommender/user_index/user_index.csv", help="Path to user_index.csv")
-    parser.add_argument("--item-index-csv", default="data/gold/feature_store/recommender/item_index/item_index.csv", help="Path to item_index.csv")
+    parser.add_argument("--splits-path", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet", help="Path to user_item_splits parquet")
+    parser.add_argument("--user-index-path", default="data/gold/feature_store/recommender/user_index/user_index.parquet", help="Path to user_index parquet")
+    parser.add_argument("--item-index-path", default="data/gold/feature_store/recommender/item_index/item_index.parquet", help="Path to item_index parquet")
     parser.add_argument("--output-dir", default="artifacts/recommender", help="Output artifact directory")
     parser.add_argument("--embedding-dim", type=int, default=32, help="Embedding dimension for two-tower model")
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs for two-tower model")
@@ -34,25 +40,19 @@ def main() -> None:
     parser.add_argument("--l2-reg", type=float, default=1e-4, help="L2 regularization strength for two-tower updates")
     parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Gradient clipping norm for two-tower training (0 disables)")
     parser.add_argument("--early-stop-rounds", type=int, default=3, help="Stop two-tower after this many non-improving epochs (0 disables)")
-    parser.add_argument("--early-stop-metric", choices=["loss", "val_recall_at_k"], default="val_recall_at_k", help="Two-tower early-stop metric")
     parser.add_argument("--early-stop-k", type=int, default=20, help="K used by validation Recall@K early stopping")
     parser.add_argument("--early-stop-tolerance", type=float, default=1e-4, help="Minimum metric improvement to count as progress")
     parser.add_argument("--temperature", type=float, default=1.0, help="Softmax temperature for two-tower logits (>0)")
-    parser.add_argument("--normalize-embeddings", type=int, choices=[0, 1], default=1, help="L2-normalize user/item embeddings during scoring (1=yes)")
     parser.add_argument("--tower-hidden-dim", type=int, default=0, help="Two-tower MLP hidden dimension (0 disables MLP tower)")
     parser.add_argument("--tower-dropout", type=float, default=0.0, help="Two-tower MLP dropout rate")
-    parser.add_argument("--device", choices=["auto"], default="auto", help="Device mode for two-tower training (auto=cuda if available else cpu)")
     parser.add_argument("--mf-components", type=int, default=32, help="Latent factors for MF baseline")
     parser.add_argument("--mf-n-iter", type=int, default=15, help="Iteration budget for MF SVD solver")
     parser.add_argument("--mf-weighting", choices=["binary", "tfidf"], default="tfidf", help="Input weighting mode for MF")
-    parser.add_argument("--mf-algorithm", choices=["randomized", "arpack"], default="randomized", help="MF SVD solver")
-    parser.add_argument("--mf-tol", type=float, default=0.0, help="MF error tolerance (used by arpack solver)")
-    parser.add_argument("--popularity-transform", choices=["linear", "log1p"], default="log1p", help="Score transform for popularity baseline")
     parser.add_argument("--top-ks", default="10,20", help="Comma-separated K values for offline metrics")
     args = parser.parse_args()
 
     # Resolve and validate inputs.
-    split_path, output_dir = Path(args.splits_csv), Path(args.output_dir)
+    split_path, output_dir = Path(args.splits_path), Path(args.output_dir)
     if not split_path.exists(): raise FileNotFoundError(f"Split CSV not found: {split_path}")
     top_ks = sorted({int(value.strip()) for value in args.top_ks.split(",") if value.strip()})
     if not top_ks: raise ValueError("At least one K is required in --top-ks")
@@ -62,8 +62,8 @@ def main() -> None:
     rows = _load_split_rows(split_path)
     _validate_split_chronology(rows)
     train, validation, test = _build_interactions(rows)
-    user_ids, user_to_idx = _load_entity_index(Path(args.user_index_csv), id_col="user_id", idx_col="user_idx")
-    item_ids, item_to_idx = _load_entity_index(Path(args.item_index_csv), id_col="item_id", idx_col="item_idx")
+    user_ids, user_to_idx = _load_entity_index(Path(args.user_index_path), id_col="user_id", idx_col="user_idx")
+    item_ids, item_to_idx = _load_entity_index(Path(args.item_index_path), id_col="item_id", idx_col="item_idx")
     print(
         "[recommender.train] loaded splits:",
         f"train_users={len(train)}, val_users={len(validation)}, test_users={len(test)}, item_universe={len(item_ids)}",
@@ -74,11 +74,11 @@ def main() -> None:
     )
     print(
         "[recommender.train] convergence:",
-        f"early_stop_rounds={args.early_stop_rounds}, early_stop_metric={args.early_stop_metric}, early_stop_tolerance={args.early_stop_tolerance}, early_stop_k={args.early_stop_k}, temperature={args.temperature}, normalize_embeddings={bool(args.normalize_embeddings)}, tower_hidden_dim={args.tower_hidden_dim}, tower_dropout={args.tower_dropout}, device={args.device}, mf_algorithm={args.mf_algorithm}, mf_tol={args.mf_tol}",
+        f"early_stop_rounds={args.early_stop_rounds}, early_stop_metric={EARLY_STOP_METRIC}, early_stop_tolerance={args.early_stop_tolerance}, early_stop_k={args.early_stop_k}, temperature={args.temperature}, normalize_embeddings={NORMALIZE_EMBEDDINGS}, tower_hidden_dim={args.tower_hidden_dim}, tower_dropout={args.tower_dropout}, device={DEVICE}, mf_algorithm={MF_ALGORITHM}",
     )
 
     # Train candidate models.
-    popularity = _popularity_scores(train, item_to_idx, transform=args.popularity_transform)
+    popularity = _popularity_scores(train, item_to_idx, transform=POPULARITY_TRANSFORM)
     print("[recommender.train] trained popularity baseline")
     mf_user, mf_item = _train_mf(
         train,
@@ -87,11 +87,11 @@ def main() -> None:
         args.mf_components,
         n_iter=args.mf_n_iter,
         weighting=args.mf_weighting,
-        algorithm=args.mf_algorithm,
-        tol=args.mf_tol,
+        algorithm=MF_ALGORITHM,
+        tol=0.0,
     )
     print(
-        f"[recommender.train] trained mf baseline (components={args.mf_components}, n_iter={args.mf_n_iter}, weighting={args.mf_weighting}, algorithm={args.mf_algorithm})"
+        f"[recommender.train] trained mf baseline (components={args.mf_components}, n_iter={args.mf_n_iter}, weighting={args.mf_weighting}, algorithm={MF_ALGORITHM})"
     )
     tt_user, tt_item = _train_two_tower(
         train,
@@ -105,18 +105,18 @@ def main() -> None:
         l2_reg=args.l2_reg,
         max_grad_norm=max(0.0, args.max_grad_norm),
         early_stop_rounds=max(0, args.early_stop_rounds),
-        early_stop_metric=args.early_stop_metric,
+        early_stop_metric=EARLY_STOP_METRIC,
         early_stop_k=max(1, args.early_stop_k),
         early_stop_tolerance=max(0.0, args.early_stop_tolerance),
         validation_interactions=validation,
         temperature=float(args.temperature),
-        normalize_embeddings=bool(args.normalize_embeddings),
+        normalize_embeddings=NORMALIZE_EMBEDDINGS,
         tower_hidden_dim=max(0, args.tower_hidden_dim),
         tower_dropout=max(0.0, args.tower_dropout),
-        device=args.device,
+        device=DEVICE,
         verbose=True,
     )
-    if bool(args.normalize_embeddings):
+    if NORMALIZE_EMBEDDINGS:
         tt_user, tt_item = _l2_normalize_rows(tt_user), _l2_normalize_rows(tt_item)
     print("[recommender.train] trained two_tower")
 
@@ -195,7 +195,7 @@ def main() -> None:
     _write_json(output_dir / "validation_retrieval_metrics.json", {"rows": validation_metrics, "k_values": top_ks})
     _write_json(output_dir / "test_retrieval_metrics.json", {"rows": test_metrics, "k_values": top_ks})
     _write_json(output_dir / "train_metrics.json", {
-        "input_splits_csv": str(split_path),
+        "input_splits_path": str(split_path),
         "selected_model_name": selected_model_name,
         "selection_rule": f"maximize_validation_Recall@{select_k}",
         "k_values": top_ks,
@@ -215,20 +215,20 @@ def main() -> None:
             "l2_reg": args.l2_reg,
             "max_grad_norm": max(0.0, args.max_grad_norm),
             "early_stop_rounds": max(0, args.early_stop_rounds),
-            "early_stop_metric": args.early_stop_metric,
+            "early_stop_metric": EARLY_STOP_METRIC,
             "early_stop_k": max(1, args.early_stop_k),
             "early_stop_tolerance": max(0.0, args.early_stop_tolerance),
             "temperature": float(args.temperature),
-            "normalize_embeddings": bool(args.normalize_embeddings),
+            "normalize_embeddings": NORMALIZE_EMBEDDINGS,
             "tower_hidden_dim": max(0, args.tower_hidden_dim),
             "tower_dropout": max(0.0, args.tower_dropout),
-            "device": args.device,
+            "device": DEVICE,
             "mf_components": args.mf_components,
             "mf_n_iter": args.mf_n_iter,
             "mf_weighting": args.mf_weighting,
-            "mf_algorithm": args.mf_algorithm,
-            "mf_tol": args.mf_tol,
-            "popularity_transform": args.popularity_transform,
+            "mf_algorithm": MF_ALGORITHM,
+            "mf_tol": 0.0,
+            "popularity_transform": POPULARITY_TRANSFORM,
             "ann_backend": ann_metadata.get("backend"),
         },
     })

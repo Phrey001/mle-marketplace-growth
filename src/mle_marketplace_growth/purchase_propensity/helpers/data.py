@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import csv
 import hashlib
 from pathlib import Path
+
+import duckdb
 
 
 def _quantile(values: list[float], q: float) -> float:
@@ -39,25 +40,36 @@ def _stable_ratio(key: str) -> float:
 
 
 def _load_training_rows(
-    input_path: Path,
+    input_paths: Path | list[Path],
     feature_columns: list[str],
     purchase_label_column: str,
     revenue_label_column: str,
 ) -> list[dict]:
+    paths = [input_paths] if isinstance(input_paths, Path) else input_paths
+    if not paths:
+        raise ValueError("At least one training dataset path is required.")
     rows = []
-    with input_path.open("r", encoding="utf-8", newline="") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
+    for input_path in paths:
+        connection = duckdb.connect(database=":memory:")
+        try:
+            cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(input_path)])
+            columns = [col[0] for col in cursor.description]
+            source_rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        finally:
+            connection.close()
+        for row in source_rows:
             rows.append(
                 {
-                    "user_id": row["user_id"],
-                    "as_of_date": row["as_of_date"],
-                    "features": {feature: float(row[feature]) for feature in feature_columns} | {"country": row["country"]},
+                    "user_id": str(row["user_id"]),
+                    "as_of_date": str(row["as_of_date"]),
+                    "features": {feature: float(row[feature]) for feature in feature_columns} | {"country": str(row["country"])},
                     "purchase_label": float(row[purchase_label_column]),
                     "revenue_label": float(row[revenue_label_column]),
                 }
             )
-    if not rows: raise ValueError(f"No rows found in input dataset: {input_path}")
+    if not rows:
+        joined_paths = ", ".join(str(path) for path in paths)
+        raise ValueError(f"No rows found in input dataset(s): {joined_paths}")
     return rows
 
 

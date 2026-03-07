@@ -2,9 +2,9 @@
 
 ## Report Metadata
 
-- Artifact source: `artifacts/purchase_propensity/cycle_initial/` and `artifacts/purchase_propensity/cycle_retrain/`
-- Run scope: two-cycle purchase propensity demo (`cycle_initial` + `cycle_retrain`) from the recommended quickstart flow
-- Update policy: update this report (or append a new version) after reruns with material result changes
+- **Artifact source:** `artifacts/purchase_propensity/cycle_initial/` and `artifacts/purchase_propensity/cycle_retrain/`
+- **Run scope:** two-cycle purchase propensity demo (`cycle_initial` + `cycle_retrain`) from the recommended quickstart flow
+- **Update policy:** update this report (or append a new version) after reruns with material result changes
 
 ## 1) Executive Summary
 
@@ -21,15 +21,8 @@
 
 ## 2) Evaluation Setup
 
-**YAML-configurable knobs** for this run (`configs/purchase_propensity/cycle_initial.yaml` and `configs/purchase_propensity/cycle_retrain.yaml`):
-- Validation mode: `out_of_time_10_1_1` (strict 10 train months + 1 validation month + 1 test month)
-- Policy comparison mode: budget-constrained `Top-K` per slice (`K = budget / cost_per_user`)
-- Budget policy assumptions: budget `5000`, cost/user `5`
-- Window knobs: `prediction_window_days`, `feature_lookback_days` (defined in YAML)
-
-**Validation slicing note:** this run uses strict monthly `10/1/1` slices per cycle (`train/validation/test`).
-Method details are defined in `docs/purchase_propensity/spec.md`.
-Intended production-style cadence is quarterly rolling retraining; this demo executes one retrain cycle only to keep scope concise.
+- Run used standard purchase-propensity contract from `docs/purchase_propensity/spec.md` (split/window/policy/selection/artifact checks).
+- YAML inputs: `configs/purchase_propensity/cycle_initial.yaml` and `configs/purchase_propensity/cycle_retrain.yaml`.
 
 **Observed run outputs** (artifact-derived, informational):
 - `cycle_initial/` and `cycle_retrain/` each group artifacts into `offline_eval/` (strict split predictions + policy outputs) and `report/` (validation summary + interpretation files).

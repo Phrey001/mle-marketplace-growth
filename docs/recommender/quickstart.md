@@ -45,16 +45,15 @@ PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recomme
 ```bash
 # Train and offline-evaluate popularity/MF/two-tower from prebuilt gold
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.train \
-  --splits-csv data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv \
-  --user-index-csv data/gold/feature_store/recommender/user_index/user_index.csv \
-  --item-index-csv data/gold/feature_store/recommender/item_index/item_index.csv \
+  --splits-path data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet \
+  --user-index-path data/gold/feature_store/recommender/user_index/user_index.parquet \
+  --item-index-path data/gold/feature_store/recommender/item_index/item_index.parquet \
   --output-dir artifacts/recommender
-
-# Validate output contract and write interpretation
-PYTHONPATH=src python -m mle_marketplace_growth.recommender.validate_outputs \
-  --artifacts-dir artifacts/recommender \
-  --output-json artifacts/recommender/output_validation_summary.json
 ```
+
+Validation note:
+- `validate_outputs` is core and runs automatically when using `run_pipeline`.
+- direct `validate_outputs` CLI is only for manual debug/recovery runs.
 
 ### 3) Serve Batch (predict only; no split logic and no offline evaluation inside scoring)
 
@@ -84,27 +83,7 @@ Fail-fast behavior:
 - engine-specific gold build requires prebuilt shared silver; run `build_shared_silver` first.
 - ML pipeline consumes prebuilt recommender gold tables from `build_gold_recommender`.
 - recommender event-date bounds are validated against available shared silver event-date bounds during feature-store build.
-
-Demo wrapper runs:
-- recommender model training/evaluation from prebuilt gold tables
-- training/evaluation for popularity, MF, and two-tower retrieval
-- Top-K candidate generation
-- automated output validation + interpretation (includes random baseline anchor `K/N` and lift-vs-random framing)
-
-## Key Config Params
-
-| Group | Params |
-|---|---|
-| Split/versioning | `split_version` |
-| Two-tower training | `embedding_dim`, `epochs`, `learning_rate`, `negative_samples`, `batch_size`, `l2_reg`, `max_grad_norm` |
-| Two-tower convergence | `early_stop_rounds`, `early_stop_metric`, `early_stop_k`, `early_stop_tolerance` |
-| Two-tower scoring/stability | `temperature`, `normalize_embeddings` |
-| Optional tower depth | `tower_hidden_dim`, `tower_dropout` (`tower_hidden_dim=0` disables MLP towers) |
-| Device | `device` (`auto` only: uses `cuda` when available, else `cpu`) |
-| MF baseline | `mf_components`, `mf_n_iter`, `mf_weighting`, `mf_algorithm`, `mf_tol` |
-| Popularity baseline | `popularity_transform` |
-| Serving output | `top_k` (candidates written per user) |
-| Offline eval cutoffs | `top_ks` (for example `10,20` computes Recall/NDCG/HitRate at K=10 and K=20) |
+Contract details (split/model/artifact/acceptance): `docs/recommender/spec.md`.
 
 ## Outputs To Review
 

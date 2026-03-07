@@ -4,14 +4,14 @@ Purpose: produce reproducible point-in-time datasets for:
 - recommender training/evaluation
 - purchase propensity training and offline policy evaluation
 
-Flow: Bronze (`data/bronze/online_retail_ii/raw.csv`) → Silver (`data/silver/transactions_line_items/transactions_line_items.csv`) → Gold (`data/gold/feature_store/recommender/...` and `data/gold/feature_store/purchase_propensity/...`).
+Flow: Bronze (`data/bronze/online_retail_ii/raw.csv`) -> Silver (`data/silver/transactions_line_items/transactions_line_items.parquet`, canonicalized in `data/_tmp/feature_store.duckdb`) -> Gold (`data/gold/feature_store/recommender/...` and `data/gold/feature_store/purchase_propensity/...`).
 
 Build commands (separable by layer/engine):
 
 ```bash
 PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silver --shared-config configs/shared.yaml
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_purchase_propensity --config configs/purchase_propensity/cycle_initial.yaml
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --output-root data
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_purchase_propensity --config configs/purchase_propensity/cycle_initial.yaml --shared-config configs/shared.yaml
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml --shared-config configs/shared.yaml
 ```
 
 Each command runs transformations, executes DQ checks, and writes a run manifest for its scope.
@@ -33,15 +33,16 @@ Common arguments:
 
 | Argument | Default | Purpose |
 | --- | --- | --- |
+| `--shared-config PATH` | optional | Shared config defaults (for example `output_root`). |
+| `--config PATH` | required (gold scripts) | Engine-specific config defaults. |
+| `--output-root PATH` | from config (`data`) | Root output directory for materialized artifacts. |
 | `--panel-end-date YYYY-MM-DD` | from purchase config | Purchase-propensity anchor date; builder derives previous 11 monthly snapshots + anchor (strict 12 total). |
 | `--recommender-min-event-date YYYY-MM-DD` | unset | Optional lower bound event_date filter for recommender outputs. |
 | `--recommender-max-event-date YYYY-MM-DD` | unset | Optional upper bound event_date filter for recommender outputs. |
-| `--split-version STRING` | `time_rank_v1` | Writes split-strategy/version tag into `gold_user_item_splits.split_version` and run manifest. |
-| `--input-csv PATH` | `data/bronze/online_retail_ii/raw.csv` | Overrides raw input CSV path. |
-| `--output-root PATH` | `data` | Overrides root output directory for materialized artifacts. |
-| `--bad-ts-threshold FLOAT` | `0.01` | Fails build if bad timestamp ratio in raw input exceeds threshold. |
 
 Run manifest captures build lineage (inputs, params, quality, artifacts) for reproducibility, debugging, and downstream experiment tracking.
+
+Note: recommender split strategy is fixed in this repo (`split_version='time_rank_v1'`), so it is no longer exposed as a config/CLI knob.
 
 Why `--panel-end-date` matters:
 

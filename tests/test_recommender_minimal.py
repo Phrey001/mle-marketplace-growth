@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import duckdb
 import numpy as np
 
 from mle_marketplace_growth.recommender.train import (
@@ -16,11 +17,18 @@ from mle_marketplace_growth.recommender.train import (
 class RecommenderMinimalTests(unittest.TestCase):
     def _write_rows(self, rows: list[dict]) -> Path:
         temp_dir = Path(tempfile.mkdtemp())
-        path = temp_dir / "splits.csv"
-        with path.open("w", encoding="utf-8", newline="") as file:
+        csv_path = temp_dir / "splits.csv"
+        path = temp_dir / "splits.parquet"
+        with csv_path.open("w", encoding="utf-8", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
+        connection = duckdb.connect(database=":memory:")
+        try:
+            connection.execute("CREATE OR REPLACE TABLE t AS SELECT * FROM read_csv_auto(?)", [str(csv_path)])
+            connection.execute(f"COPY t TO '{str(path)}' (FORMAT PARQUET)")
+        finally:
+            connection.close()
         return path
 
     def test_window_overlap_test_split_chronology_violation(self) -> None:

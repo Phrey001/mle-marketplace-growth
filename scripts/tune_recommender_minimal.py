@@ -17,9 +17,9 @@ import yaml
 
 
 def _run_train(
-    splits_csv: Path,
-    user_index_csv: Path,
-    item_index_csv: Path,
+    splits_path: Path,
+    user_index_path: Path,
+    item_index_path: Path,
     output_dir: Path,
     top_ks: str,
     config: dict[str, str | int | float],
@@ -28,12 +28,12 @@ def _run_train(
         sys.executable,
         "-m",
         "mle_marketplace_growth.recommender.train",
-        "--splits-csv",
-        str(splits_csv),
-        "--user-index-csv",
-        str(user_index_csv),
-        "--item-index-csv",
-        str(item_index_csv),
+        "--splits-path",
+        str(splits_path),
+        "--user-index-path",
+        str(user_index_path),
+        "--item-index-path",
+        str(item_index_path),
         "--output-dir",
         str(output_dir),
         "--top-ks",
@@ -69,16 +69,16 @@ def _trial_result(output_dir: Path, trial_name: str, config: dict[str, str | int
 def main() -> None:
     parser = argparse.ArgumentParser(description="Minimal recommender hyperparameter tuning sweep.")
     parser.add_argument("--config", default="configs/recommender/default.yaml", help="Base recommender YAML config")
-    parser.add_argument("--splits-csv", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv")
-    parser.add_argument("--user-index-csv", default="data/gold/feature_store/recommender/user_index/user_index.csv")
-    parser.add_argument("--item-index-csv", default="data/gold/feature_store/recommender/item_index/item_index.csv")
+    parser.add_argument("--splits-path", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet")
+    parser.add_argument("--user-index-path", default="data/gold/feature_store/recommender/user_index/user_index.parquet")
+    parser.add_argument("--item-index-path", default="data/gold/feature_store/recommender/item_index/item_index.parquet")
     parser.add_argument("--output-root", default="artifacts/recommender/tuning")
     parser.add_argument("--top-ks", default="10,20")
     args = parser.parse_args()
 
-    splits_csv = Path(args.splits_csv)
-    user_index_csv = Path(args.user_index_csv)
-    item_index_csv = Path(args.item_index_csv)
+    splits_path = Path(args.splits_path)
+    user_index_path = Path(args.user_index_path)
+    item_index_path = Path(args.item_index_path)
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     config_path = Path(args.config)
@@ -97,20 +97,14 @@ def main() -> None:
         "l2_reg": float(config_payload.get("l2_reg", 1e-4)),
         "max_grad_norm": float(config_payload.get("max_grad_norm", 1.0)),
         "early_stop_rounds": int(config_payload.get("early_stop_rounds", 4)),
-        "early_stop_metric": str(config_payload.get("early_stop_metric", "val_recall_at_k")),
         "early_stop_k": int(config_payload.get("early_stop_k", 20)),
         "early_stop_tolerance": float(config_payload.get("early_stop_tolerance", 1e-4)),
         "temperature": float(config_payload.get("temperature", 1.0)),
-        "normalize_embeddings": int(config_payload.get("normalize_embeddings", 1)),
         "tower_hidden_dim": int(config_payload.get("tower_hidden_dim", 0)),
         "tower_dropout": float(config_payload.get("tower_dropout", 0.0)),
-        "device": str(config_payload.get("device", "auto")),
         "mf_components": int(config_payload.get("mf_components", 64)),
         "mf_n_iter": int(config_payload.get("mf_n_iter", 15)),
         "mf_weighting": str(config_payload.get("mf_weighting", "tfidf")),
-        "mf_algorithm": str(config_payload.get("mf_algorithm", "randomized")),
-        "mf_tol": float(config_payload.get("mf_tol", 0.0)),
-        "popularity_transform": str(config_payload.get("popularity_transform", "log1p")),
     }
     # Compact local sweep around current defaults (keeps runtime practical).
     small_grid = [
@@ -127,11 +121,11 @@ def main() -> None:
     results: list[dict] = []
     # Baseline trial uses current YAML defaults so tuning is comparable to main pipeline settings.
     trial_dir = output_root / "trial_default"
-    _run_train(splits_csv, user_index_csv, item_index_csv, trial_dir, args.top_ks, default_cfg)
+    _run_train(splits_path, user_index_path, item_index_path, trial_dir, args.top_ks, default_cfg)
     results.append(_trial_result(trial_dir, "trial_default", default_cfg))
     for i, cfg in enumerate(small_grid, start=1):
         tdir = output_root / f"trial_{i}"
-        _run_train(splits_csv, user_index_csv, item_index_csv, tdir, args.top_ks, cfg)
+        _run_train(splits_path, user_index_path, item_index_path, tdir, args.top_ks, cfg)
         results.append(_trial_result(tdir, f"trial_{i}", cfg))
 
     best = max(results, key=lambda r: r["validation_recall_at_20"])

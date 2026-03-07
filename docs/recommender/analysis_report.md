@@ -18,11 +18,7 @@
 ## 2) Evaluation Setup
 
 - Pipeline run: `src/mle_marketplace_growth/recommender/run_pipeline.py`
-- Retrieval stage: ANN-backed top-K retrieval (`faiss_hnsw_ip`).
-- Models compared: `popularity`, `mf`, `two_tower`.
-- Baseline hierarchy: Random floor (`K/N`) -> Popularity -> MF -> Two-tower.
-- Selection rule from artifacts: `maximize_validation_Recall@20`.
-- Metric cutoffs: `K={10,20}`.
+- Run used standard recommender contract from `docs/recommender/spec.md` (split/method/selection/metrics).
 
 From `artifacts/recommender/train_metrics.json`:
 - embedding dim: `64`

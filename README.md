@@ -40,7 +40,7 @@ pip install -r requirements.txt
 - Use engine-specific runbooks:
   - `docs/purchase_propensity/quickstart.md`
   - `docs/recommender/quickstart.md`
-- Modeling choices (scaling, spend capping, calibration) are documented in `docs/purchase_propensity/spec.md`.
+- Engine contracts (split/model/artifact/acceptance): `docs/purchase_propensity/spec.md`, `docs/recommender/spec.md`.
 
 ## Tech Stack
 
@@ -49,10 +49,6 @@ pip install -r requirements.txt
 | Shared | Python, DuckDB, NumPy, CSV artifacts, YAML config |
 | Purchase propensity | scikit-learn, XGBoost |
 | Recommender | scikit-learn (MF baseline), PyTorch (two-tower), FAISS (ANN retrieval) |
-
-Detailed per-engine stack and contracts:
-- `docs/purchase_propensity/spec.md`
-- `docs/recommender/spec.md`
 
 ## Portfolio Signal Snapshot
 
@@ -70,12 +66,9 @@ Detailed per-engine stack and contracts:
 | No recommender Stage 2 re-ranking | Current recommender scope is intentionally Stage 1 retrieval only. |
 | Production next step (out of scope) | Run randomized A/B tests for promotion decisions before broad rollout. |
 
-## Purchase Propensity Policy Interpretation
-
-- Purchase propensity policy comparison uses three policies: ML expected-value targeting, random baseline, and RFM heuristic baseline.
-- Budget is used to decide **who to target** (allocation logic), not to simulate behavior change from incentive exposure.
-- Results compare policy performance on historical holdout outcomes; they do **not** estimate causal incrementality.
-- Policy definitions and design details are documented in `docs/purchase_propensity/spec.md`.
+Policy and evaluation definitions live in engine specs to avoid doc duplication:
+- `docs/purchase_propensity/spec.md`
+- `docs/recommender/spec.md`
 
 ## Docs
 

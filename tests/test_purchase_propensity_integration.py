@@ -135,6 +135,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             input_csv = tmp_root / "raw.csv"
             output_root = tmp_root / "data"
             artifacts_root = tmp_root / "artifacts"
+            shared_config_path = tmp_root / "shared.yaml"
             config_path = tmp_root / "config.yaml"
             _write_fixture_raw_csv(input_csv)
 
@@ -142,10 +143,19 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             env["PYTHONPATH"] = str(repo_root / "src")
             env["OMP_NUM_THREADS"] = "1"
 
-            config_path.write_text(
+            shared_config_path.write_text(
                 "\n".join(
                     [
                         f"input_csv: \"{input_csv}\"",
+                        f"output_root: \"{output_root}\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                "\n".join(
+                    [
                         f"output_root: \"{output_root}\"",
                         f"artifacts_dir: \"{artifacts_root}\"",
                         "panel_end_date: \"2011-11-10\"",
@@ -164,13 +174,21 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                 [
                     ".venv/bin/python",
                     "-m",
-                    "mle_marketplace_growth.feature_store.build",
-                    "--build-engines",
-                    "shared",
-                    "--input-csv",
-                    str(input_csv),
-                    "--output-root",
-                    str(output_root),
+                    "mle_marketplace_growth.feature_store.build_shared_silver",
+                    "--shared-config",
+                    str(shared_config_path),
+                ],
+                env,
+            )
+            self._run(
+                [
+                    ".venv/bin/python",
+                    "-m",
+                    "mle_marketplace_growth.feature_store.build_gold_purchase_propensity",
+                    "--config",
+                    str(config_path),
+                    "--shared-config",
+                    str(shared_config_path),
                 ],
                 env,
             )

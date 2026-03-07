@@ -5,21 +5,23 @@ import csv
 import pickle
 from pathlib import Path
 
+import duckdb
+
 
 # ===== Entry Point =====
 def main() -> None:
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Batch-score propensity and expected value from feature snapshots.")
-    parser.add_argument("--input-csv", default="data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-12-09/user_features_asof.csv", help="Path to user feature snapshot CSV")
+    parser.add_argument("--input-path", default="data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-12-09/user_features_asof.parquet", help="Path to user feature snapshot parquet")
     parser.add_argument("--model-path", default="artifacts/purchase_propensity/propensity_model.pkl", help="Path to trained propensity model bundle")
     parser.add_argument("--output-csv", default="artifacts/purchase_propensity/prediction_scores.csv", help="Path to output scored CSV")
     args = parser.parse_args()
 
     # ===== Input Checks =====
-    input_path = Path(args.input_csv)
+    input_path = Path(args.input_path)
     model_path = Path(args.model_path)
     output_path = Path(args.output_csv)
-    if not input_path.exists(): raise FileNotFoundError(f"Input CSV not found: {input_path}")
+    if not input_path.exists(): raise FileNotFoundError(f"Input path not found: {input_path}")
     if not model_path.exists(): raise FileNotFoundError(f"Model not found: {model_path}")
 
     # ===== Load Trained Artifacts =====
@@ -36,8 +38,13 @@ def main() -> None:
     prediction_window_days = int(model_bundle["prediction_window_days"])
     spend_feature = f"monetary_{feature_lookback_days}d"
 
-    with input_path.open("r", encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
+    connection = duckdb.connect(database=":memory:")
+    try:
+        cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(input_path)])
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    finally:
+        connection.close()
     if not rows: raise ValueError(f"No rows found in input dataset: {input_path}")
 
     # ===== Score Users =====

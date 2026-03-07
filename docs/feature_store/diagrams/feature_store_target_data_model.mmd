@@ -17,5 +17,5 @@ flowchart TD
     T --> F["Purchase Propensity Training + Offline Policy Evaluation"]
   end
 
-  N["<b>Notes:</b><br/>1) <b>PK</b> lines are high-level key columns only; full PK/schema is in docs/feature_store/data_dictionary.md.<br/><br/>2) <b>Key control columns:</b><br/>- <b>as_of_date:</b> point-in-time propensity snapshot key<br/>- <b>split:</b> recommender train/val/test partition key<br/>- <b>split_version:</b> split-strategy version key<br/><br/>3) Feature store materializes multiple windows, while main propensity pipeline default remains 30d target + 90d lookback."]
+  N["<b>Notes:</b><br/>1) <b>PK</b> lines are high-level key columns only; full PK/schema is in docs/feature_store/data_dictionary.md.<br/><br/>2) <b>Key control columns:</b><br/>- <b>as_of_date:</b> point-in-time propensity snapshot key<br/>- <b>split:</b> recommender train/val/test partition key<br/>- <b>split_version:</b> fixed split-strategy tag (`time_rank_v1`)<br/><br/>3) Feature store materializes multiple windows, while main propensity pipeline default remains 30d target + 90d lookback."]
   N -.-> B

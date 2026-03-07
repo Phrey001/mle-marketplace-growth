@@ -61,14 +61,15 @@ def main() -> None:
     parser.add_argument("--output-json", required=True, help="Output JSON path")
     parser.add_argument("--budget", type=float, required=True, help="Total incentive budget")
     parser.add_argument("--cost-per-user", type=float, required=True, help="Cost per targeted user")
-    parser.add_argument("--purchase-label-col", default="label_purchase_30d", help="Purchase label column")
-    parser.add_argument("--revenue-label-col", default="label_net_revenue_30d", help="Revenue label column")
+    parser.add_argument("--prediction-window-days", type=int, choices=[30, 60, 90], default=30, help="Label horizon used for policy backtest metrics")
     args = parser.parse_args()
 
     if args.budget <= 0.0: raise ValueError("--budget must be greater than 0")
     if args.cost_per_user <= 0.0: raise ValueError("--cost-per-user must be greater than 0")
 
-    rows = _load_rows(Path(args.scores_csv), args.purchase_label_col, args.revenue_label_col)
+    purchase_label_col = f"label_purchase_{args.prediction_window_days}d"
+    revenue_label_col = f"label_net_revenue_{args.prediction_window_days}d"
+    rows = _load_rows(Path(args.scores_csv), purchase_label_col, revenue_label_col)
     target_count = int(args.budget // args.cost_per_user)
     if target_count < 1: raise ValueError("Budget is too small to target any user.")
 
@@ -78,8 +79,8 @@ def main() -> None:
             policy_name=policy_name,
             score_col=score_col,
             target_count=target_count,
-            purchase_label_col=args.purchase_label_col,
-            revenue_label_col=args.revenue_label_col,
+            purchase_label_col=purchase_label_col,
+            revenue_label_col=revenue_label_col,
             cost_per_user=args.cost_per_user,
         )
         for policy_name, score_col in POLICIES
@@ -92,6 +93,7 @@ def main() -> None:
         "assumptions": {
             "budget": args.budget,
             "cost_per_user": args.cost_per_user,
+            "prediction_window_days": args.prediction_window_days,
             "target_count_by_budget": target_count,
             "policy_scoring_columns": {name: col for name, col in POLICIES},
         },

@@ -2,7 +2,6 @@
 
 import argparse
 import calendar
-import csv
 import json
 import subprocess
 import sys
@@ -44,82 +43,38 @@ def _generate_snapshot_dates(panel_end_date: date) -> list[str]:
     return snapshots
 
 
-def _merge_train_datasets(train_paths: list[Path], merged_output_path: Path) -> None:
-    merged_output_path.parent.mkdir(parents=True, exist_ok=True)
-    wrote_header = False
-    with merged_output_path.open("w", encoding="utf-8", newline="") as out_file:
-        writer = None
-        for path in train_paths:
-            if not path.exists(): raise FileNotFoundError(f"Training dataset not found: {path}")
-            with path.open("r", encoding="utf-8", newline="") as in_file:
-                reader = csv.DictReader(in_file)
-                if not reader.fieldnames: raise ValueError(f"Missing header in training dataset: {path}")
-                if writer is None: writer = csv.DictWriter(out_file, fieldnames=reader.fieldnames)
-                if not wrote_header:
-                    writer.writeheader()
-                    wrote_header = True
-                for row in reader:
-                    writer.writerow(row)
-
 def _run_module(module: str, *args: object) -> None:
     command = [sys.executable, "-m", module, *map(str, args)]
     print("Running:", " ".join(command))
     subprocess.run(command, check=True)
 
 
-def _default_artifacts_dir_from_config(config_path_value: str | None, base_dir: str) -> str:
-    if not config_path_value:
-        return base_dir
-    return str(Path(base_dir) / Path(config_path_value).stem)
-
-
-def _resolve_from_cfg(args: argparse.Namespace, cfg_get, name: str, default, cast=None):
-    value = getattr(args, name)
-    value = cfg_get(name, default) if value is None else value
-    return cast(value) if cast else value
-
 # ===== Entry Point =====
 def main() -> None:
-    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
     parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
-
-    parser.add_argument("--output-root", default=None, help="Root containing prebuilt purchase-propensity gold feature-store datasets")
-    parser.add_argument("--artifacts-dir", default=None, help="Output directory for model/evaluation artifacts")
-    parser.add_argument("--panel-end-date", default=None, help="End anchor (YYYY-MM-DD) for strict 12-month panel; derived split is 10 train / 1 val / 1 test.")
-    parser.add_argument("--prediction-window-days", type=int, default=None, help="Allowed values: 30, 60, 90 (default baseline: 30).")
-    parser.add_argument("--feature-lookback-days", type=int, default=None, help="Allowed values: 60, 90, 120 (default baseline: 90).")
-    parser.add_argument("--window-selection-mode", choices=["sensitivity", "fixed"], default=None, help="`sensitivity`: select structural decisions from window_sensitivity output; `fixed`: use config values directly.")
-    parser.add_argument("--force-propensity-model", choices=["logistic_regression", "xgboost"], default=None, help="Only used when --window-selection-mode=fixed.")
-    parser.add_argument("--budget", type=float, default=None, help="Budget for offline policy evaluation")
-    parser.add_argument("--cost-per-user", type=float, default=None, help="Cost per targeted user for offline policy evaluation")
     args = parser.parse_args()
     cfg = load_yaml_defaults(args.config, "Engine config").get
-    for name, default, cast in [
-        ("output_root", "data", None),
-        ("artifacts_dir", _default_artifacts_dir_from_config(args.config, "artifacts/purchase_propensity"), None),
-        ("panel_end_date", None, None),
-        ("prediction_window_days", 30, int),
-        ("feature_lookback_days", 90, int),
-        ("window_selection_mode", "sensitivity", None),
-        ("force_propensity_model", None, None),
-        ("budget", 5000.0, float),
-        ("cost_per_user", 5.0, float),
-    ]:
-        setattr(args, name, _resolve_from_cfg(args, cfg, name, default, cast))
+    output_root = Path(cfg("output_root", "data"))
+    artifacts_dir = Path(cfg("artifacts_dir", str(Path("artifacts/purchase_propensity") / Path(args.config).stem)))
+    panel_end_date_raw = cfg("panel_end_date", None)
+    prediction_window_days = int(cfg("prediction_window_days", 30))
+    feature_lookback_days = int(cfg("feature_lookback_days", 90))
+    window_selection_mode = cfg("window_selection_mode", "sensitivity")
+    force_propensity_model = cfg("force_propensity_model", None)
+    budget = float(cfg("budget", 5000.0))
+    cost_per_user = float(cfg("cost_per_user", 5.0))
 
     # ===== Validate Inputs =====
-    output_root = Path(args.output_root)
-    artifacts_dir = Path(args.artifacts_dir)
     offline_eval_dir = artifacts_dir / "offline_eval"
     report_dir = artifacts_dir / "report"
-    if not args.panel_end_date:
+    if not panel_end_date_raw:
         raise ValueError("--panel-end-date is required")
-    panel_end_date = date.fromisoformat(args.panel_end_date)
+    panel_end_date = date.fromisoformat(panel_end_date_raw)
     train_as_of_dates = _generate_snapshot_dates(panel_end_date)
-    if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
-    if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
-    print(f"Window profile: prediction={args.prediction_window_days}d, feature_lookback={args.feature_lookback_days}d")
+    if prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
+    if feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
+    print(f"Window profile: prediction={prediction_window_days}d, feature_lookback={feature_lookback_days}d")
 
     # ===== Build Training Input (Prebuilt Gold Required) =====
     train_paths = [
@@ -129,7 +84,7 @@ def main() -> None:
         / "purchase_propensity"
         / "propensity_train_dataset"
         / f"as_of_date={as_of_date}"
-        / "propensity_train_dataset.csv"
+        / "propensity_train_dataset.parquet"
         for as_of_date in train_as_of_dates
     ]
     missing_train_paths = [path for path in train_paths if not path.exists()]
@@ -139,23 +94,19 @@ def main() -> None:
             "Build them first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
             f"(example missing path: {missing_train_paths[0]})."
         )
-    temp_merged_csv: Path | None = None
-    if len(train_paths) == 1:
-        train_input_csv = train_paths[0]
-    else:
-        temp_merged_csv = artifacts_dir / "_tmp" / "propensity_train_dataset_merged.csv"
-        train_input_csv = temp_merged_csv
-        _merge_train_datasets(train_paths, train_input_csv)
+    train_input_paths = train_paths
 
     # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
-    expect_window_sensitivity = args.window_selection_mode == "sensitivity"
+    expect_window_sensitivity = window_selection_mode == "sensitivity"
     if expect_window_sensitivity:
         _run_module(
             "mle_marketplace_growth.purchase_propensity.window_sensitivity",
-            "--input-csv",
-            train_input_csv,
-            "--events-csv",
-            output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv",
+            "--panel-root",
+            output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset",
+            "--panel-end-date",
+            panel_end_date.isoformat(),
+            "--events-path",
+            output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
             "--output-json",
             offline_eval_dir / "window_sensitivity.json",
             "--output-plot",
@@ -173,9 +124,9 @@ def main() -> None:
             f"propensity_model={frozen_propensity_model}",
         )
     else:
-        frozen_prediction_window_days = int(args.prediction_window_days)
-        frozen_feature_lookback_days = int(args.feature_lookback_days)
-        frozen_propensity_model = args.force_propensity_model
+        frozen_prediction_window_days = int(prediction_window_days)
+        frozen_feature_lookback_days = int(feature_lookback_days)
+        frozen_propensity_model = force_propensity_model
         print(
             "Frozen decision from fixed config:",
             f"prediction_window={frozen_prediction_window_days}d,",
@@ -185,8 +136,7 @@ def main() -> None:
 
     # ===== Train + Offline Evaluate =====
     train_args: list[str | Path | int] = [
-        "--input-csv",
-        train_input_csv,
+        *[arg for path in train_input_paths for arg in ("--input-path", path)],
         "--output-dir",
         offline_eval_dir,
         "--prediction-window-days",
@@ -204,13 +154,11 @@ def main() -> None:
     # ===== Offline Policy Evaluation (Validation + Test) =====
     policy_eval_args = [
         "--budget",
-        args.budget,
+        budget,
         "--cost-per-user",
-        args.cost_per_user,
-        "--purchase-label-col",
-        f"label_purchase_{frozen_prediction_window_days}d",
-        "--revenue-label-col",
-        f"label_net_revenue_{frozen_prediction_window_days}d",
+        cost_per_user,
+        "--prediction-window-days",
+        frozen_prediction_window_days,
     ]
     _run_module(
         "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
@@ -245,11 +193,6 @@ def main() -> None:
         expect_window_sensitivity=expect_window_sensitivity,
     )
     print(f"Wrote output interpretation: {interpretation_path}")
-    if temp_merged_csv and temp_merged_csv.exists():
-        temp_merged_csv.unlink()
-        if temp_merged_csv.parent.exists() and not any(temp_merged_csv.parent.iterdir()):
-            temp_merged_csv.parent.rmdir()
-
 
 if __name__ == "__main__":
     main()

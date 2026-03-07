@@ -1,118 +1,83 @@
 # Recommender Engine — Spec
 
 High-level architecture lives in `docs/architecture.pptx`.
-This document is the implementation contract for the recommender engine in this repository.
-
-## Spec Lifecycle
-
-- This spec starts as a preliminary design document derived from `docs/architecture.pptx`.
-- As code and run artifacts stabilize, it is finalized as the implementation contract for this repo.
+This file is the implementation contract for the recommender engine.
 
 ## Objective
 
-Build an offline-evaluated Stage-1 retrieval engine that generates personalized Top-K item candidates from implicit transaction interactions.
+Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates from implicit interactions.
 
-## Scope and Boundary
+## Scope
 
-- In scope: retrieval/candidate generation and offline evaluation.
-- Out of scope: downstream re-ranking model, online serving stack, and online A/B experimentation.
+- In scope: candidate retrieval and offline evaluation.
+- Out of scope: re-ranking, online serving stack, online A/B experimentation.
 - Scope note: offline ranking metrics are not causal business-lift evidence.
 
-## Tech Stack
+## Core Contract
 
-- Feature/data layer: DuckDB SQL + CSV materialization.
-- Baselines: NumPy + scikit-learn (`TruncatedSVD` for MF).
-- Two-tower model: PyTorch.
-- Retrieval index: FAISS HNSW (inner-product ANN), fail-fast required.
+| Area | Contract |
+|---|---|
+| Split mode | User-level chronological holdout: train=all but latest two, val=second-latest, test=latest |
+| Eligibility | Users with fewer than 3 interactions are excluded from ranking evaluation |
+| Candidate universe | Retrieval candidates are from train item universe |
+| Models compared | `popularity`, `mf`, `two_tower` |
+| Selection rule | Maximize validation `Recall@20` |
+| Required K | `K={10,20}` |
+| ANN backend | FAISS HNSW inner-product index, fail-fast if unavailable |
 
-## Inputs and Feature Store Contract
-
-Required feature-store inputs:
-- `data/gold/feature_store/recommender/interaction_events/interaction_events.csv`
-- `data/gold/feature_store/recommender/user_item_splits/user_item_splits.csv`
-- `data/gold/feature_store/recommender/user_index/user_index.csv`
-- `data/gold/feature_store/recommender/item_index/item_index.csv`
-
-Split contract (chronological, leakage-safe):
-- `train`: all but latest two interactions per user
-- `val`: second-latest interaction per user
-- `test`: latest interaction per user
-- users with fewer than 3 interactions are excluded from ranking metrics
-- train item universe defines retrieval candidates
-
-## Models
-
-| Level | Model | Role |
-|---|---|---|
-| 0 | Random | Theoretical floor (`K/N` anchor in interpretation) |
-| 1 | Popularity | Strong heuristic baseline |
-| 2 | Matrix Factorization (MF) | Classical ML baseline |
-| 3 | Two-tower | Neural retrieval baseline (primary model) |
-
-Training characteristics:
-- implicit positives from train interactions
-- sampled negatives
-- binary objective for pair discrimination
+Datetime ownership/bounds:
+- Shared silver data availability is defined by `configs/shared.yaml`.
+- Engine datetime is owned by recommender config (`recommender_min_event_date`, `recommender_max_event_date`).
+- Engine datetime may be narrower than shared bounds, but must not exceed shared silver event-date bounds (fail-fast on violation).
 
 ## Pipeline Map
 
 | Stage | Script | Key output(s) |
 |---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.csv`, `user_item_splits.csv`, index tables |
-| Model training/evaluation | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
-| Retrieval serving artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
-| Output validation/reporting | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
+| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.parquet`, `user_item_splits.parquet`, `user_index.parquet`, `item_index.parquet` |
+| Train/evaluate | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
+| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
+| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
 
-## Serving (Retrieval)
+## Model Contract
 
-- Precompute item embeddings from selected model.
-- Build ANN index over item embeddings (FAISS HNSW IP).
-- Produce user-level Top-K recommendations from ANN retrieval.
-- Fail fast when ANN dependency/artifacts are unavailable.
-
-## Offline Evaluation
-
-Required metrics at K:
-- Recall@K (primary selection metric)
-- NDCG@K
-- HitRate@K
-
-Required K values:
-- `K = 10, 20`
-
-Selection rule:
-- maximize validation `Recall@20`
-
-Reporting:
-- compare `popularity`, `mf`, `two_tower` on validation and test
-- record selected model and selection rule in artifacts
+| Item | Contract |
+|---|---|
+| Baseline hierarchy | Random floor (`K/N`) -> Popularity -> MF -> Two-tower |
+| MF implementation | `TruncatedSVD` over implicit interaction matrix |
+| Two-tower objective | Contrastive cross-entropy with in-batch + sampled negatives |
+| Two-tower scoring | L2-normalized dot product (cosine-style); temperature applied in training logits |
+| Primary metric | `Recall@20` |
+| Guardrails | `NDCG@K`, `HitRate@K` |
 
 ## Artifact Contract
 
-Training/evaluation artifacts:
-- `artifacts/recommender/train_metrics.json`
-- `artifacts/recommender/validation_retrieval_metrics.json`
-- `artifacts/recommender/test_retrieval_metrics.json`
-- `artifacts/recommender/model_bundle.pkl`
+Training/evaluation artifacts (`artifacts/recommender/`):
 
-Serving/retrieval artifacts:
-- `artifacts/recommender/item_embeddings.npy`
-- `artifacts/recommender/item_embedding_index.json`
-- `artifacts/recommender/ann_index.bin`
-- `artifacts/recommender/ann_index_meta.json`
-- `artifacts/recommender/topk_recommendations.csv`
+- `train_metrics.json`
+- `validation_retrieval_metrics.json`
+- `test_retrieval_metrics.json`
+- `model_bundle.pkl`
 
-Validation/report artifacts:
-- `artifacts/recommender/output_validation_summary.json`
-- `artifacts/recommender/output_interpretation.md`
-- `docs/recommender/analysis_report.md`
+Retrieval artifacts (`artifacts/recommender/`):
 
-Run commands are documented in `docs/recommender/quickstart.md`.
+- `item_embeddings.npy`
+- `item_embedding_index.json`
+- `ann_index.bin`
+- `ann_index_meta.json`
+- `topk_recommendations.csv`
+
+Validation/report artifacts (`artifacts/recommender/`):
+
+- `output_validation_summary.json`
+- `output_interpretation.md`
 
 ## Acceptance Criteria
 
 - Output validation summary passes.
-- Validation/test metrics include all three models (`popularity`, `mf`, `two_tower`).
-- Selected model and selection rule are explicitly recorded.
+- Validation/test metric files include all three models.
+- Selected model and selection rule are explicit in artifacts.
 - ANN artifacts are present and consistent with selected model.
-- Top-K output is non-empty and schema-valid.
+- Top-K recommendations are non-empty and schema-valid.
+
+Run commands: `docs/recommender/quickstart.md`.

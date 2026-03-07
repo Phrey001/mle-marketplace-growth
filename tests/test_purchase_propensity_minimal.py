@@ -3,18 +3,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import duckdb
+
 from mle_marketplace_growth.purchase_propensity.train import _load_training_rows, _policy_scores, _split_rows, _stable_ratio
 
 
 class PurchasePropensityMinimalTests(unittest.TestCase):
-    def _write_csv(self, fieldnames: list[str], rows: list[dict]) -> Path:
+    def _write_parquet(self, fieldnames: list[str], rows: list[dict]) -> Path:
         # Small helper for focused input fixtures per test.
         temp_dir = Path(tempfile.mkdtemp())
-        path = temp_dir / "input.csv"
-        with path.open("w", encoding="utf-8", newline="") as file:
+        csv_path = temp_dir / "input.csv"
+        path = temp_dir / "input.parquet"
+        with csv_path.open("w", encoding="utf-8", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
+        connection = duckdb.connect(database=":memory:")
+        try:
+            connection.execute("CREATE OR REPLACE TABLE t AS SELECT * FROM read_csv_auto(?)", [str(csv_path)])
+            connection.execute(f"COPY t TO '{str(path)}' (FORMAT PARQUET)")
+        finally:
+            connection.close()
         return path
 
     def test_window_overlap_test_chronological_split_order(self) -> None:
@@ -123,7 +132,7 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
                 "label_net_revenue_30d": "100",
             }
         ]
-        path = self._write_csv(fieldnames, rows)
+        path = self._write_parquet(fieldnames, rows)
         with self.assertRaises(KeyError):
             _load_training_rows(
                 path,

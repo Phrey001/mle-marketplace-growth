@@ -8,8 +8,7 @@ from pathlib import Path
 
 import duckdb
 
-from .build_helpers import copy_table_to_csv, load_sql_assets, load_yaml_defaults, run_dq_check
-from .build_shared_silver import bootstrap_silver
+from .build_helpers import copy_table_to_parquet, load_shared_silver_table, load_sql_assets, load_yaml_defaults, run_dq_check
 
 
 def _add_month(current: date) -> date:
@@ -41,9 +40,9 @@ def _generate_snapshot_dates(panel_end_date: date) -> list[date]:
 
 def _resolve_purchase_paths(propensity_root: Path, as_of_date: date) -> tuple[Path, Path, Path, Path]:
     as_of_partition = f"as_of_date={as_of_date.isoformat()}"
-    labels_path = propensity_root / "labels" / as_of_partition / "labels.csv"
-    features_path = propensity_root / "user_features_asof" / as_of_partition / "user_features_asof.csv"
-    propensity_train_path = propensity_root / "propensity_train_dataset" / as_of_partition / "propensity_train_dataset.csv"
+    labels_path = propensity_root / "labels" / as_of_partition / "labels.parquet"
+    features_path = propensity_root / "user_features_asof" / as_of_partition / "user_features_asof.parquet"
+    propensity_train_path = propensity_root / "propensity_train_dataset" / as_of_partition / "propensity_train_dataset.parquet"
     manifest_path = propensity_root / "_meta" / as_of_partition / "run_manifest.json"
     return labels_path, features_path, propensity_train_path, manifest_path
 
@@ -70,40 +69,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build purchase-propensity gold datasets for a strict 12-month panel.")
     parser.add_argument("--config", required=True, help="Engine YAML config file")
     parser.add_argument("--shared-config", default=None, help="Optional shared YAML config file")
-    parser.add_argument("--input-csv", default=None, help="Path to raw source CSV (metadata only for this command)")
     parser.add_argument("--output-root", default=None, help="Output root path for silver/gold materializations")
     parser.add_argument("--panel-end-date", default=None, help="End anchor (YYYY-MM-DD) for strict 12-month panel")
-    parser.add_argument("--bad-ts-threshold", type=float, default=None, help="Ignored in this command; shared layer already enforces it")
     args = parser.parse_args()
     defaults = load_yaml_defaults(args.shared_config, "Shared config")
     defaults.update(load_yaml_defaults(args.config, "Engine config"))
     cfg = defaults.get
-    args.input_csv = args.input_csv or cfg("input_csv", "data/bronze/online_retail_ii/raw.csv")
     args.output_root = args.output_root or cfg("output_root", "data")
     args.panel_end_date = args.panel_end_date or cfg("panel_end_date", None)
-    args.bad_ts_threshold = float(args.bad_ts_threshold if args.bad_ts_threshold is not None else 0.01)
 
     # Resolve inputs and required assets.
     if not args.panel_end_date:
         raise ValueError("--panel-end-date is required")
     panel_end_date = date.fromisoformat(args.panel_end_date)
 
-    input_csv = Path(args.input_csv)
     output_root = Path(args.output_root)
     sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
-    silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.csv"
+    shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
     propensity_root = output_root / "gold" / "feature_store" / "purchase_propensity"
 
-    # Bootstrap shared silver and validate available time bounds.
+    # Load canonical shared silver and validate available time bounds.
     connection = duckdb.connect(database=":memory:")
-    bootstrap_silver(
-        connection,
-        build_shared=False,
-        input_csv=input_csv,
-        silver_path=silver_path,
-        sql=sql,
-        bad_ts_threshold=args.bad_ts_threshold,
-    )
+    load_shared_silver_table(connection, shared_db_path)
     silver_min_date, silver_max_date = connection.execute("SELECT min(event_date), max(event_date) FROM silver_transactions_line_items").fetchone()
     if silver_min_date is None or silver_max_date is None:
         raise ValueError("No rows in silver_transactions_line_items; cannot build gold layers")
@@ -128,7 +115,7 @@ def main() -> None:
         ]
         artifact_rows: dict[str, int] = {}
         for artifact_name, table_name, artifact_path in artifacts:
-            row_count = copy_table_to_csv(connection, table_name, artifact_path, sql["copy_table_to_csv"], sql["count_rows"])
+            row_count = copy_table_to_parquet(connection, table_name, artifact_path, sql["count_rows"])
             artifact_rows[artifact_name] = row_count
             print(f"Wrote gold table: {artifact_path} ({row_count} rows)")
 
@@ -136,9 +123,9 @@ def main() -> None:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             "built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "input": {"path": str(input_csv)},
+            "input": {"shared_db_path": str(shared_db_path)},
             "params": {"build_engine": "purchase_propensity", "panel_end_date": panel_end_date.isoformat(), "as_of_date": as_of_date.isoformat()},
-            "quality": {"raw_total_rows": None, "raw_exact_duplicate_rows": None, "raw_bad_timestamp_rows": None, "raw_bad_timestamp_ratio": None},
+            "quality": {"raw_total_rows": None, "raw_bad_timestamp_rows": None, "raw_bad_timestamp_ratio": None},
             "artifacts": {name: {"path": str(path), "rows": artifact_rows[name]} for name, _, path in artifacts},
         }
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

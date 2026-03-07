@@ -1,12 +1,13 @@
 """Run 30/60/90-day label-window sensitivity for propensity modeling."""
 
 import argparse
-import csv
+import calendar
 import json
 from bisect import bisect_right
 from datetime import date, timedelta
 from pathlib import Path
 
+import duckdb
 import matplotlib.pyplot as plt
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction import DictVectorizer
@@ -22,9 +23,37 @@ FEATURE_KEYS_BY_LOOKBACK = {
     120: ["recency_days", "frequency_30d", "frequency_120d", "monetary_30d", "monetary_120d", "avg_basket_value_120d", "country"],
 }
 ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
+FIXED_WINDOWS = [30, 60, 90]
+SPEND_CAP_QUANTILE = 0.99
+CALIBRATION_METHOD = "sigmoid"
 
 
 # ===== Shared Utilities =====
+def _add_month(current: date) -> date:
+    year = current.year + (1 if current.month == 12 else 0)
+    month = 1 if current.month == 12 else current.month + 1
+    day = min(current.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _shift_month(current: date, delta_months: int) -> date:
+    month_index = current.month - 1 + delta_months
+    year = current.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(current.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _panel_paths(panel_root: Path, panel_end_date: date) -> list[Path]:
+    start_date = _shift_month(panel_end_date, -11)
+    paths: list[Path] = []
+    current = start_date
+    for _ in range(12):
+        paths.append(panel_root / f"as_of_date={current.isoformat()}" / "propensity_train_dataset.parquet")
+        current = _add_month(current)
+    return paths
+
+
 def _strict_split_indices(rows: list[dict]) -> tuple[list[int], list[int], list[int], str]:
     unique_dates = sorted({row["as_of_date"] for row in rows})
     if len(unique_dates) != 12: raise ValueError("Strict split requires exactly 12 unique as_of_date snapshots " f"(got {len(unique_dates)}).")
@@ -43,10 +72,47 @@ def _strict_split_indices(rows: list[dict]) -> tuple[list[int], list[int], list[
 
 
 # ===== Data Loading =====
-def _load_feature_rows(path: Path) -> list[dict]:
-    with path.open("r", encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
-    if not rows: raise ValueError(f"No rows in feature dataset: {path}")
+def _read_feature_rows(paths: list[Path]) -> list[dict]:
+    rows: list[dict] = []
+    connection = duckdb.connect(database=":memory:")
+    try:
+        for path in paths:
+            cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(path)])
+            columns = [col[0] for col in cursor.description]
+            rows.extend(dict(zip(columns, row, strict=True)) for row in cursor.fetchall())
+    finally:
+        connection.close()
+    return rows
+
+
+def _read_event_rows(path: Path) -> list[dict]:
+    connection = duckdb.connect(database=":memory:")
+    try:
+        cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(path)])
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    finally:
+        connection.close()
+
+
+def _load_positive_event_dates(path: Path) -> dict[str, list[date]]:
+    rows = _read_event_rows(path)
+    events_by_user: dict[str, list[date]] = {}
+    for row in rows:
+        user_id = str(row["user_id"])
+        if not user_id:
+            continue
+        if float(row["quantity"]) <= 0:
+            continue
+        event_day = date.fromisoformat(str(row["event_date"]))
+        events_by_user.setdefault(user_id, []).append(event_day)
+    for user_id in events_by_user:
+        events_by_user[user_id].sort()
+    return events_by_user
+
+
+def _load_feature_rows(rows: list[dict]) -> list[dict]:
+    if not rows: raise ValueError("No rows in feature dataset.")
     required_columns = {
         "user_id",
         "as_of_date",
@@ -68,9 +134,9 @@ def _load_feature_rows(path: Path) -> list[dict]:
     if missing: raise ValueError(f"Missing required feature columns for strict window sensitivity: {missing}")
     return [
         {
-            "user_id": row["user_id"],
-            "as_of_date": row["as_of_date"],
-            "as_of_date_obj": date.fromisoformat(row["as_of_date"]),
+            "user_id": str(row["user_id"]),
+            "as_of_date": str(row["as_of_date"]),
+            "as_of_date_obj": date.fromisoformat(str(row["as_of_date"])),
             "features": {
                 "recency_days": float(row["recency_days"]),
                 "frequency_30d": float(row["frequency_30d"]),
@@ -89,21 +155,6 @@ def _load_feature_rows(path: Path) -> list[dict]:
         }
         for row in rows
     ]
-
-
-def _load_positive_event_dates(path: Path) -> dict[str, list[date]]:
-    with path.open("r", encoding="utf-8", newline="") as file:
-        rows = csv.DictReader(file)
-        events_by_user = {}
-        for row in rows:
-            user_id = row["user_id"]
-            if not user_id: continue
-            if float(row["quantity"]) <= 0: continue
-            event_day = date.fromisoformat(row["event_date"])
-            events_by_user.setdefault(user_id, []).append(event_day)
-    for user_id in events_by_user:
-        events_by_user[user_id].sort()
-    return events_by_user
 
 
 # ===== Label + Metric Utilities =====
@@ -321,38 +372,45 @@ def _write_validation_dashboard(output: dict, output_path: Path) -> None:
 def main() -> None:
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run 30/60/90-day sensitivity for propensity models.")
-    parser.add_argument("--input-csv", default="artifacts/purchase_propensity/_tmp/propensity_train_dataset_merged.csv", help="Path to merged strict 12-snapshot training panel CSV")
-    parser.add_argument("--events-csv", default="data/silver/transactions_line_items/transactions_line_items.csv", help="Path to silver transactions CSV (for recalculating labels by window)")
-    parser.add_argument("--windows", default="30,60,90", help="Comma-separated label windows in days")
-    parser.add_argument("--spend-cap-quantile", type=float, default=0.99, help="Quantile cap for monetary_90d to reduce extreme-spend dominance (0 < q <= 1).")
     parser.add_argument(
-        "--calibration-method",
-        choices=["none", "sigmoid", "isotonic"],
-        default="sigmoid",
-        help="Probability calibration method applied on train folds before validation scoring.",
+        "--input-path",
+        action="append",
+        default=None,
+        help="Path to strict training-panel parquet (repeat --input-path for multi-snapshot panel)",
     )
+    parser.add_argument(
+        "--panel-root",
+        default=None,
+        help="Root folder of panel snapshots (e.g. data/.../propensity_train_dataset); auto-loads strict 12 months with --panel-end-date",
+    )
+    parser.add_argument("--panel-end-date", default=None, help="Panel end anchor (YYYY-MM-DD) used with --panel-root")
+    parser.add_argument("--events-path", default="data/silver/transactions_line_items/transactions_line_items.parquet", help="Path to silver transactions parquet (for recalculating labels by window)")
     parser.add_argument("--output-json", default="artifacts/purchase_propensity/window_sensitivity.json", help="Path to sensitivity summary JSON")
     parser.add_argument("--output-plot", default="artifacts/purchase_propensity/window_validation_dashboard.png", help="Path to window validation dashboard PNG")
     args = parser.parse_args()
 
     # ===== Input Checks =====
-    if not 0.0 < args.spend_cap_quantile <= 1.0: raise ValueError("--spend-cap-quantile must be in (0, 1]")
+    if args.input_path:
+        feature_paths = [Path(path) for path in args.input_path]
+    elif args.panel_root and args.panel_end_date:
+        feature_paths = _panel_paths(Path(args.panel_root), date.fromisoformat(args.panel_end_date))
+    else:
+        feature_paths = [
+            Path("data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2011-11-09/propensity_train_dataset.parquet")
+        ]
+    events_path = Path(args.events_path)
+    missing_features = [path for path in feature_paths if not path.exists()]
+    if missing_features: raise FileNotFoundError(f"Input path not found: {missing_features[0]}")
+    if not events_path.exists(): raise FileNotFoundError(f"Events path not found: {events_path}")
 
-    feature_path = Path(args.input_csv)
-    events_path = Path(args.events_csv)
-    if not feature_path.exists(): raise FileNotFoundError(f"Input CSV not found: {feature_path}")
-    if not events_path.exists(): raise FileNotFoundError(f"Events CSV not found: {events_path}")
-
-    windows = sorted({int(value.strip()) for value in args.windows.split(",") if value.strip()})
-    if not windows: raise ValueError("No windows provided.")
+    windows = FIXED_WINDOWS
     if set(windows) != ALLOWED_PREDICTION_WINDOWS:
         raise ValueError("--windows must be exactly 30,60,90 for strict architecture alignment.")
 
     # ===== Load Data =====
-    rows = _load_feature_rows(feature_path)
-    with feature_path.open("r", encoding="utf-8", newline="") as file:
-        raw_rows = list(csv.DictReader(file))
-    if not raw_rows: raise ValueError(f"No rows in feature dataset: {feature_path}")
+    raw_rows = _read_feature_rows(feature_paths)
+    if not raw_rows: raise ValueError(f"No rows in feature dataset(s): {', '.join(str(path) for path in feature_paths)}")
+    rows = _load_feature_rows(raw_rows)
 
     # ===== Split + Label Schema Checks =====
     train_indices, validation_indices, _, split_description = _strict_split_indices(rows)
@@ -376,8 +434,8 @@ def main() -> None:
             labels,
             train_indices,
             validation_indices,
-            args.spend_cap_quantile,
-            args.calibration_method,
+            SPEND_CAP_QUANTILE,
+            CALIBRATION_METHOD,
             FEATURE_KEYS_BY_LOOKBACK[90],
         )
         sensitivity_rows.append(
@@ -409,8 +467,8 @@ def main() -> None:
             labels_by_window[prediction_window_for_feature_eval],
             train_indices,
             validation_indices,
-            args.spend_cap_quantile,
-            args.calibration_method,
+            SPEND_CAP_QUANTILE,
+            CALIBRATION_METHOD,
             FEATURE_KEYS_BY_LOOKBACK[lookback_days],
         )
         feature_window_validation.append(
@@ -452,11 +510,11 @@ def main() -> None:
     }
     sorted_gaps = sorted(inter_purchase_gap_days)
     output = {
-        "input_csv": str(feature_path),
-        "events_csv": str(events_path),
+        "input_paths": [str(path) for path in feature_paths],
+        "events_path": str(events_path),
         "split_strategy": split_description,
-        "spend_cap_quantile": args.spend_cap_quantile,
-        "calibration_method": args.calibration_method,
+        "spend_cap_quantile": SPEND_CAP_QUANTILE,
+        "calibration_method": CALIBRATION_METHOD,
         "note": "offline sensitivity only; not causal promotional incrementality evidence",
         "inter_purchase_distribution": {
             "gap_observation_count": len(inter_purchase_gap_days),
