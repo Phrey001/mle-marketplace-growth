@@ -1,0 +1,106 @@
+{
+  "input_paths": [
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2009-12-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-01-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-02-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-03-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-04-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-05-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-06-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-07-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-08-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-09-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-10-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-11-01/propensity_train_dataset.parquet"
+  ],
+  "target_definition": "label_purchase_90d",
+  "revenue_backtest_label": "label_net_revenue_90d",
+  "prediction_window_days": 90,
+  "feature_lookback_days": 120,
+  "validation_split_description": "out_of_time_10_1_1_train_dates=['2009-12-01', '2010-01-01', '2010-02-01', '2010-03-01', '2010-04-01', '2010-05-01', '2010-06-01', '2010-07-01', '2010-08-01', '2010-09-01'];validation_dates=['2010-10-01'];test_dates=['2010-11-01']",
+  "spend_cap_quantile": 0.99,
+  "spend_cap_value": 8796.878,
+  "calibration_method": "sigmoid",
+  "revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "revenue_fallback_value": 1217.243743,
+  "train_rows": 21721,
+  "validation_rows": 3649,
+  "test_rows": 4022,
+  "selected_model_name": "xgboost",
+  "selected_propensity_model_name": "xgboost",
+  "selected_revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "validation_quality": {
+    "roc_auc": 0.709847,
+    "average_precision": 0.746357,
+    "top_decile_lift": 1.765028,
+    "top_decile_positive_rate": 0.917582,
+    "base_positive_rate": 0.519868,
+    "brier_score": 0.216176,
+    "ece_10_bin": 0.034741
+  },
+  "test_quality": {
+    "roc_auc": 0.725503,
+    "average_precision": 0.699534,
+    "top_decile_lift": 2.022832,
+    "top_decile_positive_rate": 0.875622,
+    "base_positive_rate": 0.432869,
+    "brier_score": 0.214363,
+    "ece_10_bin": 0.090414
+  },
+  "revenue_validation_quality": {
+    "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+    "row_count": 1897,
+    "rmse": 2251.515499,
+    "mae": 704.087369,
+    "mape": 1.227699,
+    "mape_note": "MAPE excludes rows with zero actual revenue.",
+    "status": "ok"
+  },
+  "revenue_test_quality": {
+    "evaluation_population": "test_rows_with_label_purchase_90d_equals_1",
+    "row_count": 1741,
+    "rmse": 2644.808466,
+    "mae": 698.875875,
+    "mape": 1.44075,
+    "mape_note": "MAPE excludes rows with zero actual revenue."
+  },
+  "propensity_model_candidates": [
+    {
+      "model_name": "logistic_regression",
+      "roc_auc": 0.700252,
+      "average_precision": 0.731671
+    },
+    {
+      "model_name": "xgboost",
+      "roc_auc": 0.709847,
+      "average_precision": 0.746357
+    }
+  ],
+  "revenue_model_candidates": [
+    {
+      "model_name": "xgboost_regressor_conditional_revenue",
+      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+      "row_count": 1897,
+      "rmse": 2251.515499,
+      "mae": 704.087369,
+      "mape": 1.227699,
+      "mape_note": "MAPE excludes rows with zero actual revenue.",
+      "status": "ok"
+    },
+    {
+      "model_name": "constant_mean_positive_revenue",
+      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
+      "row_count": 1897,
+      "rmse": 3458.955299,
+      "mae": 1147.794019,
+      "mape": 2.802608,
+      "mape_note": "MAPE excludes rows with zero actual revenue.",
+      "status": "ok"
+    }
+  ],
+  "model_validation": {
+    "selected_propensity_model_name": "xgboost",
+    "selected_revenue_model_name": "xgboost_regressor_conditional_revenue"
+  },
+  "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality"
+}

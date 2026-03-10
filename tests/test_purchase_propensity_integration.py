@@ -187,8 +187,6 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                     "mle_marketplace_growth.feature_store.build_gold_purchase_propensity",
                     "--config",
                     str(config_path),
-                    "--shared-config",
-                    str(shared_config_path),
                 ],
                 env,
             )

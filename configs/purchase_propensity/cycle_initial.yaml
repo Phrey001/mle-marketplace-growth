@@ -1,6 +1,8 @@
-panel_end_date: "2010-11-01" # initial cycle anchor; pipeline derives 11 prior monthly snapshots + this month (12 total; strict 10/1/1 split)
-window_selection_mode: "sensitivity" # run structural search and freeze on initial cycle
-prediction_window_days: 30 # baseline default only; final frozen prediction window comes from sensitivity output
-feature_lookback_days: 90 # baseline default only; final frozen lookback window comes from sensitivity output
+panel_end_date: "2010-11-01" # monthly snapshot anchor (1st of month); pipeline derives 11 prior monthly snapshots + this month (12 total; strict 10/1/1 split)
+output_root: "data"
+window_selection_mode: "sensitivity" # run structural search and freeze on initial cycle (allowed: sensitivity|fixed)
+force_propensity_model: null # sensitivity mode ignores this (model chosen by sensitivity); fixed required: logistic_regression|xgboost
+prediction_window_days: 30 # sensitivity mode ignores this; final frozen prediction window comes from sweep (allowed: 30/60/90)
+feature_lookback_days: 90 # sensitivity mode ignores this; final frozen lookback window comes from sweep (allowed: 60/90/120)
 budget: 5000.0 # budget used in offline policy allocation
 cost_per_user: 5.0 # assumed unit incentive cost per targeted user

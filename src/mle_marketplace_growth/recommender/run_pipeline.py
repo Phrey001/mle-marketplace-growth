@@ -42,6 +42,7 @@ def main() -> None:
     top_k = int(cfg("top_k", 20))
     top_ks = cfg("top_ks", "10,20")
 
+    # ===== Validate Inputs (Prebuilt Gold Required) =====
     # Resolve prebuilt gold inputs.
     split_path = output_root / "gold" / "feature_store" / "recommender" / "user_item_splits" / "user_item_splits.parquet"
     user_index_path = output_root / "gold" / "feature_store" / "recommender" / "user_index" / "user_index.parquet"

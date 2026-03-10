@@ -1,3 +1,5 @@
+-- Purpose: Count gold_labels rows with invalid label_name/window_days pairing.
+-- Select count of invalid label rows.
 SELECT COUNT(*)
 FROM gold_labels
 WHERE (label_name = 'net_revenue_30d' AND window_days <> 30)

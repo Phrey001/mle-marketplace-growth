@@ -1,5 +1,8 @@
+-- Purpose: Create gold_user_item_splits with time-rank train/val/test splits.
 CREATE OR REPLACE TABLE gold_user_item_splits AS
-WITH ordered_interactions AS (
+WITH
+ordered_interactions AS (
+  -- Rank interactions per user to assign recency-based splits.
   SELECT
     user_id,
     item_id,
@@ -7,12 +10,13 @@ WITH ordered_interactions AS (
     event_ts,
     event_date,
     weight,
-    row_number() OVER (
+    ROW_NUMBER() OVER (
       PARTITION BY user_id
       ORDER BY event_ts DESC, invoice_id DESC, item_id DESC
     ) AS recency_rank
   FROM gold_interaction_events
 )
+-- Select interactions with assigned train/val/test splits.
 SELECT
   user_id,
   item_id,

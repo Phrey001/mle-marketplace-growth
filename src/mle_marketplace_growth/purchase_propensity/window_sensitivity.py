@@ -1,7 +1,6 @@
 """Run 30/60/90-day label-window sensitivity for propensity modeling."""
 
 import argparse
-import calendar
 import json
 from bisect import bisect_right
 from datetime import date, timedelta
@@ -13,6 +12,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
+from dateutil.relativedelta import relativedelta
 from mle_marketplace_growth.purchase_propensity.helpers.data import _quantile
 from mle_marketplace_growth.purchase_propensity.helpers.metrics import _expected_calibration_error
 from mle_marketplace_growth.purchase_propensity.helpers.modeling import _build_model
@@ -29,29 +29,10 @@ CALIBRATION_METHOD = "sigmoid"
 
 
 # ===== Shared Utilities =====
-def _add_month(current: date) -> date:
-    year = current.year + (1 if current.month == 12 else 0)
-    month = 1 if current.month == 12 else current.month + 1
-    day = min(current.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def _shift_month(current: date, delta_months: int) -> date:
-    month_index = current.month - 1 + delta_months
-    year = current.year + month_index // 12
-    month = month_index % 12 + 1
-    day = min(current.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
 def _panel_paths(panel_root: Path, panel_end_date: date) -> list[Path]:
-    start_date = _shift_month(panel_end_date, -11)
-    paths: list[Path] = []
-    current = start_date
-    for _ in range(12):
-        paths.append(panel_root / f"as_of_date={current.isoformat()}" / "propensity_train_dataset.parquet")
-        current = _add_month(current)
-    return paths
+    # 12 inclusive snapshots: offsets -11..0 from the end date.
+    snapshots = [panel_end_date + relativedelta(months=offset) for offset in range(-11, 1)]
+    return [panel_root / f"as_of_date={snapshot.isoformat()}" / "propensity_train_dataset.parquet" for snapshot in snapshots]
 
 
 def _strict_split_indices(rows: list[dict]) -> tuple[list[int], list[int], list[int], str]:

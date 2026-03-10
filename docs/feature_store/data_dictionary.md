@@ -102,6 +102,8 @@ Domain: `Purchase Propensity`
 
 Grain: one row per (`user_id`, `as_of_date`, `label_name`).
 
+Note: each (`user_id`, `as_of_date`, `window_days`) has multiple rows (one per label type: purchase and net_revenue).
+
 | Column | PK | Type | Nullable | Description | Source / Rule | Example |
 | --- | --- | --- | --- | --- | --- | --- |
 | `user_id` | Yes | string | No | User identifier | distinct users up to `as_of_date` | `12347` |

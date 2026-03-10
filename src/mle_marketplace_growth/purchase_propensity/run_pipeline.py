@@ -1,13 +1,16 @@
 """Run the purchase propensity pipeline end-to-end from one command."""
 
+# Special: orchestrates sensitivity -> train -> policy eval -> validation/report in one run.
+# Suggested review order: run_pipeline.py -> train.py -> helpers/* -> policy_budget_evaluation.py -> validate_outputs.py -> window_sensitivity.py.
+
 import argparse
-import calendar
 import json
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
+from dateutil.relativedelta import relativedelta
 from mle_marketplace_growth.feature_store.build_helpers import load_yaml_defaults
 from mle_marketplace_growth.purchase_propensity.validate_outputs import run_validation, write_interpretation
 
@@ -16,31 +19,12 @@ ALLOWED_FEATURE_LOOKBACK_WINDOWS = {60, 90, 120}
 
 
 # ===== Path + Date Helpers =====
-def _add_month(current: date) -> date:
-    year = current.year + (1 if current.month == 12 else 0)
-    month = 1 if current.month == 12 else current.month + 1
-    day = min(current.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def _shift_month(current: date, delta_months: int) -> date:
-    month_index = current.month - 1 + delta_months
-    year = current.year + month_index // 12
-    month = month_index % 12 + 1
-    day = min(current.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
 def _generate_snapshot_dates(panel_end_date: date) -> list[str]:
-    start_date = _shift_month(panel_end_date, -11)
-    snapshots = []
-    current = start_date
-    for _ in range(12):
-        snapshots.append(current.isoformat())
-        current = _add_month(current)
+    # 12 inclusive snapshots: offsets -11..0 from the end date.
+    snapshots = [panel_end_date + relativedelta(months=offset) for offset in range(-11, 1)]
     if snapshots[-1] != panel_end_date.isoformat():
         raise ValueError("Derived monthly snapshot panel does not end on --panel-end-date")
-    return snapshots
+    return [snapshot.isoformat() for snapshot in snapshots]
 
 
 def _run_module(module: str, *args: object) -> None:
@@ -55,34 +39,42 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
     args = parser.parse_args()
     cfg = load_yaml_defaults(args.config, "Engine config").get
-    output_root = Path(cfg("output_root", "data"))
-    artifacts_dir = Path(cfg("artifacts_dir", str(Path("artifacts/purchase_propensity") / Path(args.config).stem)))
+
+    # Config keys expected in cycle YAML (with defaults where optional).
+    # Deterministic configs: always used (paths, dates, budgets).
+    # Branching configs: control whether we run sensitivity or use fixed settings.
+    # - window_selection_mode toggles sensitivity vs fixed path.
+    # - force_propensity_model is required only in fixed mode.
     panel_end_date_raw = cfg("panel_end_date", None)
-    prediction_window_days = int(cfg("prediction_window_days", 30))
-    feature_lookback_days = int(cfg("feature_lookback_days", 90))
-    window_selection_mode = cfg("window_selection_mode", "sensitivity")
+    output_root = Path(cfg("output_root", "data"))  # default path
+    prediction_window_days = int(cfg("prediction_window_days", 30))  # allowed values: 30/60/90
+    feature_lookback_days = int(cfg("feature_lookback_days", 90))  # allowed values: 60/90/120
+    window_selection_mode = cfg("window_selection_mode", "sensitivity")  # allowed values: sensitivity|fixed
     force_propensity_model = cfg("force_propensity_model", None)
     budget = float(cfg("budget", 5000.0))
     cost_per_user = float(cfg("cost_per_user", 5.0))
 
-    # ===== Validate Inputs =====
-    offline_eval_dir = artifacts_dir / "offline_eval"
+    # Optional key not present in cycle YAMLs (falls back to default).
+    # Default artifacts dir uses the config filename stem (stem removes .extension; e.g. artifacts/purchase_propensity/cycle_initial/).
+    artifacts_dir = Path(cfg("artifacts_dir", str(Path("artifacts/purchase_propensity") / Path(args.config).stem)))
+
+    # ===== Artifacts subfolders ===== 
+    offline_eval_dir = artifacts_dir / "offline_eval"  
     report_dir = artifacts_dir / "report"
-    if not panel_end_date_raw:
-        raise ValueError("--panel-end-date is required")
+
+    # ===== Validate Inputs =====
+    if not panel_end_date_raw: raise ValueError("--panel-end-date is required")
     panel_end_date = date.fromisoformat(panel_end_date_raw)
     train_as_of_dates = _generate_snapshot_dates(panel_end_date)
+    if window_selection_mode == "fixed" and not force_propensity_model:  # fixed mode must supply a forced model
+        raise ValueError("--force-propensity-model is required when window_selection_mode=fixed")
     if prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={prediction_window_days}d, feature_lookback={feature_lookback_days}d")
 
     # ===== Build Training Input (Prebuilt Gold Required) =====
     train_paths = [
-        output_root
-        / "gold"
-        / "feature_store"
-        / "purchase_propensity"
-        / "propensity_train_dataset"
+        output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset"
         / f"as_of_date={as_of_date}"
         / "propensity_train_dataset.parquet"
         for as_of_date in train_as_of_dates
@@ -94,23 +86,16 @@ def main() -> None:
             "Build them first with `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` "
             f"(example missing path: {missing_train_paths[0]})."
         )
-    train_input_paths = train_paths
-
     # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
     expect_window_sensitivity = window_selection_mode == "sensitivity"
     if expect_window_sensitivity:
         _run_module(
             "mle_marketplace_growth.purchase_propensity.window_sensitivity",
-            "--panel-root",
-            output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset",
-            "--panel-end-date",
-            panel_end_date.isoformat(),
-            "--events-path",
-            output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
-            "--output-json",
-            offline_eval_dir / "window_sensitivity.json",
-            "--output-plot",
-            offline_eval_dir / "window_validation_dashboard.png",
+            "--panel-root", output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset",
+            "--panel-end-date", panel_end_date.isoformat(),
+            "--events-path", output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
+            "--output-json", offline_eval_dir / "window_sensitivity.json",
+            "--output-plot", offline_eval_dir / "window_validation_dashboard.png",
         )
         window_sensitivity_output = json.loads((offline_eval_dir / "window_sensitivity.json").read_text(encoding="utf-8"))
         freeze_decision = window_sensitivity_output["freeze_decision"]
@@ -135,45 +120,33 @@ def main() -> None:
         )
 
     # ===== Train + Offline Evaluate =====
+    # Build CLI args separately so we can append the optional forced model cleanly.
+    # Repeat --input-path for multi-snapshot panel.
     train_args: list[str | Path | int] = [
-        *[arg for path in train_input_paths for arg in ("--input-path", path)],
-        "--output-dir",
-        offline_eval_dir,
-        "--prediction-window-days",
-        frozen_prediction_window_days,
-        "--feature-lookback-days",
-        frozen_feature_lookback_days,
+        *[arg for path in train_paths for arg in ("--input-path", path)],
+        "--output-dir", offline_eval_dir,
+        "--prediction-window-days", frozen_prediction_window_days,
+        "--feature-lookback-days", frozen_feature_lookback_days,
     ]
     if frozen_propensity_model: train_args.extend(["--force-propensity-model", frozen_propensity_model])
     _run_module("mle_marketplace_growth.purchase_propensity.train", *train_args)
-    validation_predictions_path = offline_eval_dir / "validation_predictions.csv"
-    test_predictions_path = offline_eval_dir / "test_predictions.csv"
-    budget_eval_validation_json_path = offline_eval_dir / "offline_policy_budget_validation.json"
-    budget_eval_test_json_path = offline_eval_dir / "offline_policy_budget_test.json"
-
     # ===== Offline Policy Evaluation (Validation + Test) =====
+    # Build policy_eval_args once since it is reused for validation and test runs.
     policy_eval_args = [
-        "--budget",
-        budget,
-        "--cost-per-user",
-        cost_per_user,
-        "--prediction-window-days",
-        frozen_prediction_window_days,
+        "--budget", budget,
+        "--cost-per-user", cost_per_user,
+        "--prediction-window-days", frozen_prediction_window_days,
     ]
     _run_module(
         "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
-        "--scores-csv",
-        validation_predictions_path,
-        "--output-json",
-        budget_eval_validation_json_path,
+        "--scores-csv", offline_eval_dir / "validation_predictions.csv",
+        "--output-json", offline_eval_dir / "offline_policy_budget_validation.json",
         *policy_eval_args,
     )
     _run_module(
         "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
-        "--scores-csv",
-        test_predictions_path,
-        "--output-json",
-        budget_eval_test_json_path,
+        "--scores-csv", offline_eval_dir / "test_predictions.csv",
+        "--output-json", offline_eval_dir / "offline_policy_budget_test.json",
         *policy_eval_args,
     )
     # ===== Validation + Interpretation =====

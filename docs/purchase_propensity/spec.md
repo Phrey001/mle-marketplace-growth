@@ -19,7 +19,7 @@ Predict purchase propensity and allocate budget with expected-value targeting:
 | Area | Contract |
 |---|---|
 | Split mode | Strict monthly `10/1/1` (10 train + 1 validation + 1 test snapshots) |
-| Datetime anchor | `panel_end_date` in cycle YAML; derive prior 11 monthly snapshots |
+| Datetime anchor | `panel_end_date` in cycle YAML; must be a monthly snapshot date (1st of month); derive prior 11 monthly snapshots |
 | Structural mode (initial) | `window_selection_mode=sensitivity` |
 | Structural mode (retrain) | `window_selection_mode=fixed` |
 | Policy evaluation | Budget-constrained Top-K (`K=floor(budget/cost_per_user)`) on validation + test |
@@ -52,6 +52,13 @@ Datetime ownership/bounds:
 | Window sets | `prediction_window_days` in `{30,60,90}`; `feature_lookback_days` in `{60,90,120}` |
 | Fixed mode behavior | Uses config values directly; no structural re-search |
 | Sensitivity mode behavior | Runs window sensitivity and freezes structural decision |
+
+Feature window notes:
+1. SQL: 30d short-term lookback windows (`frequency_30d`, `monetary_30d`) – Always include.
+2. SQL: Longer-term feature lookback window days (`frequency_*`, `monetary_*`, `avg_basket_value_*`) – Include depending on lookback window config (e.g. `90d`).
+3. Training/serving: Cap longer-term monetary lookback by excluding outliers to reduce skew to fit model towards majority of users.
+4. SQL: Skip 30‑day average basket size because most users have too few purchases in 30 days for a stable average. Still keep 30‑day counts and spend totals because even small activity in the last 30d is a useful signal.
+5. SQL: `label_*` features – Include depending on prediction window config.
 
 ## Artifact Contract
 

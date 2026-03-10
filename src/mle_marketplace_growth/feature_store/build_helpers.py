@@ -6,11 +6,6 @@ import duckdb
 import yaml
 
 
-def load_sql(sql_path: Path) -> str:
-    """Read a SQL file as UTF-8 text."""
-    return sql_path.read_text(encoding="utf-8")
-
-
 def copy_table_to_parquet(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
@@ -49,6 +44,9 @@ def run_dq_check(connection: duckdb.DuckDBPyConnection, sql: str, error_message:
 
 def load_sql_assets(sql_dir: Path) -> dict[str, str]:
     """Load SQL templates required by feature-store build scripts."""
+    def load_sql(sql_path: Path) -> str:
+        return sql_path.read_text(encoding="utf-8")
+
     return {
         # Pipeline SQL
         "create_raw_source": load_sql(sql_dir / "pipeline" / "create_raw_source.sql"),
@@ -67,11 +65,11 @@ def load_sql_assets(sql_dir: Path) -> dict[str, str]:
         "propensity_user_features": load_sql(sql_dir / "gold" / "purchase_propensity" / "user_features_asof.sql"),
         "propensity_train_dataset": load_sql(sql_dir / "gold" / "purchase_propensity" / "propensity_train_dataset.sql"),
         # DQ SQL
-        "dq_invalid_split": load_sql(sql_dir / "dq" / "gold_invalid_split_count.sql"),
-        "dq_split_chronology": load_sql(sql_dir / "dq" / "gold_split_chronology_violation_count.sql"),
-        "dq_user_features_duplicates": load_sql(sql_dir / "dq" / "gold_user_features_duplicate_grain_count.sql"),
-        "dq_invalid_labels": load_sql(sql_dir / "dq" / "gold_invalid_label_rows_count.sql"),
-        "dq_propensity_train_duplicates": load_sql(sql_dir / "dq" / "gold_propensity_train_duplicate_grain_count.sql"),
+        "dq_invalid_split": load_sql(sql_dir / "dq" / "invalid_split.sql"),
+        "dq_split_chronology": load_sql(sql_dir / "dq" / "split_chronology.sql"),
+        "dq_user_features_duplicates": load_sql(sql_dir / "dq" / "user_features_duplicates.sql"),
+        "dq_invalid_labels": load_sql(sql_dir / "dq" / "invalid_labels.sql"),
+        "dq_propensity_train_duplicates": load_sql(sql_dir / "dq" / "propensity_train_duplicates.sql"),
     }
 
 

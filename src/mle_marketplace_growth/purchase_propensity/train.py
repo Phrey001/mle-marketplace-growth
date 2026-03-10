@@ -12,8 +12,7 @@ from sklearn.metrics import average_precision_score, brier_score_loss, mean_abso
 
 from mle_marketplace_growth.purchase_propensity.helpers.data import (
     _apply_spend_cap,
-    _feature_columns,
-    _load_training_rows,
+    _load_snapshot_rows,
     _policy_scores,
     _quantile,
     _split_rows,
@@ -31,12 +30,7 @@ CALIBRATION_METHOD = "sigmoid"
 def main() -> None:
     # Parse CLI arguments.
     parser = argparse.ArgumentParser(description="Train propensity scoring models and backtest targeting policies.")
-    parser.add_argument(
-        "--input-path",
-        action="append",
-        default=None,
-        help="Path to training dataset parquet (repeat --input-path for multi-snapshot panel)",
-    )
+    parser.add_argument("--input-path", action="append", default=None, help="Path to training dataset parquet (repeat --input-path for multi-snapshot panel; action=append collects multiple values)")
     parser.add_argument("--output-dir", default="artifacts/purchase_propensity", help="Output directory for model and metrics")
     parser.add_argument("--prediction-window-days", type=int, default=30, help="Prediction horizon for purchase/revenue labels: 30, 60, 90")
     parser.add_argument("--feature-lookback-days", type=int, default=90, help="Feature lookback profile: 60, 90, 120")
@@ -47,20 +41,27 @@ def main() -> None:
     if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
 
-    input_paths = [Path(path) for path in args.input_path] if args.input_path else [
-        Path("data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2011-11-09/propensity_train_dataset.parquet")
-    ]
-    missing_inputs = [path for path in input_paths if not path.exists()]
-    if missing_inputs:
-        raise FileNotFoundError(f"Input path not found: {missing_inputs[0]}")
+    if not args.input_path: raise ValueError("--input-path is required (repeat for multi-snapshot panel)")
+    input_paths = [Path(path) for path in args.input_path]  # Each input path is one snapshot in the strict 12-month panel; convert to python list
+    missing_inputs = [path for path in input_paths if not path.exists()]  # collect paths missing on disk if any
+    if missing_inputs: raise FileNotFoundError(f"Input path not found: {missing_inputs[0]}")
 
-    feature_columns = _feature_columns(args.feature_lookback_days)
+    feature_columns = [
+        # always include recency and short-term signals
+        "recency_days",
+        "frequency_30d",
+        "monetary_30d",
+        # dependent on lookback days
+        f"frequency_{args.feature_lookback_days}d",
+        f"monetary_{args.feature_lookback_days}d",
+        f"avg_basket_value_{args.feature_lookback_days}d",
+    ]
     spend_feature = f"monetary_{args.feature_lookback_days}d"
     purchase_label_column = f"label_purchase_{args.prediction_window_days}d"
     revenue_label_column = f"label_net_revenue_{args.prediction_window_days}d"
 
     # Load strict 10/1/1 panel split and construct capped feature matrices.
-    rows = _load_training_rows(
+    rows = _load_snapshot_rows(
         input_paths,
         feature_columns=feature_columns,
         purchase_label_column=purchase_label_column,
@@ -85,11 +86,13 @@ def main() -> None:
 
     # Train/compare propensity candidates on validation split.
     candidate_results = _fit_propensity_candidates(train_matrix, train_labels, validation_matrix, validation_labels, CALIBRATION_METHOD)
+    # If force_propensity_model is set (fixed mode), use that model's result only.
     if args.force_propensity_model:
         forced = [row for row in candidate_results if row["model_name"] == args.force_propensity_model]
         if not forced: raise ValueError(f"Forced propensity model not found in candidates: {args.force_propensity_model}")
         best_result = forced[0]
     else:
+        # If not set, select the best candidate by validation average precision.
         best_result = max(candidate_results, key=lambda result: result["average_precision"])
 
     selected_model_name = best_result["model_name"]

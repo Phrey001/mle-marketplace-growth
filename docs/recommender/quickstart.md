@@ -3,6 +3,7 @@
 Environment setup is shared at repository root `README.md`.
 
 Datetime/global-vs-engine config strategy is documented in `docs/README.md`.
+Feature store data debugging tips (including parquet → CSV export commands) live in `docs/feature_store/overview.md`.
 
 ## Optional Tuning Sweep
 

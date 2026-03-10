@@ -2,6 +2,7 @@
 
 Environment setup is shared at repository root `README.md`.
 Datetime/global-vs-engine config strategy is documented in `docs/README.md`.
+Feature store data debugging tips (including parquet → CSV export commands) live in `docs/feature_store/overview.md`.
 
 ## Recommended Steps
 
@@ -33,6 +34,7 @@ Current implementation note:
 - That orchestration is packaged in `run_pipeline` for this engine (this is why the command may look broader than a thin train-only wrapper).
 - Inside `run_pipeline`, policy evaluation runs before final artifact validation checks.
 - `validate_outputs` is core in this flow and runs automatically inside `run_pipeline` (standalone validator invocation is only for manual debug/recovery).
+- When `window_selection_mode: sensitivity` (cycle 1) in config `.yaml`, `run_pipeline` runs the window sensitivity step and freezes the selected structure.
 
 ```bash
 # Cycle 1 offline train/eval/validate convenience wrapper
@@ -43,18 +45,6 @@ PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.run_pipeline
 ```
 
 Contract details (split/model/policy/artifact/acceptance): `docs/purchase_propensity/spec.md`.
-
-Optional (explicit structural search run used by cycle 1 sensitivity mode):
-
-```bash
-# Run window sensitivity directly (standalone)
-PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.window_sensitivity \
-  --panel-root data/gold/feature_store/purchase_propensity/propensity_train_dataset \
-  --panel-end-date 2010-11-01 \
-  --events-path data/silver/transactions_line_items/transactions_line_items.parquet \
-  --output-json artifacts/purchase_propensity/cycle_initial/offline_eval/window_sensitivity.json \
-  --output-plot artifacts/purchase_propensity/cycle_initial/offline_eval/window_validation_dashboard.png
-```
 
 ### 2b) Refresh Report Chart (after offline train/evaluation artifacts are generated)
 
@@ -93,7 +83,7 @@ Notes:
 | Shared dependency | Engine-specific gold build requires prebuilt shared silver (`build_shared_silver`) |
 | Gold dependency | ML pipeline consumes prebuilt purchase-propensity gold snapshots from `build_gold_purchase_propensity` |
 | Artifact folder default | `--config cycle_initial.yaml` maps to `artifacts/purchase_propensity/cycle_initial` (same for retrain); override with `--artifacts-dir` only when needed |
-| Date validation | Cycle dates are validated against shared silver event-date bounds |
+| Date validation | `panel_end_date` should be a monthly snapshot date (1st of month) and is validated against shared silver event-date bounds |
 | Artifact layout | Stage-2 outputs are grouped by purpose: `offline_eval/` (train/policy artifacts) and `report/` (validation summary + interpretation) |
 
 Optional clean rebuild:
