@@ -30,72 +30,45 @@
   "selected_propensity_model_name": "xgboost",
   "selected_revenue_model_name": "xgboost_regressor_conditional_revenue",
   "validation_quality": {
-    "roc_auc": 0.767123,
-    "average_precision": 0.657846,
-    "top_decile_lift": 2.529889,
-    "top_decile_positive_rate": 0.814059,
+    "roc_auc": 0.767346,
+    "average_precision": 0.658268,
+    "top_decile_lift": 2.515795,
+    "top_decile_positive_rate": 0.809524,
     "base_positive_rate": 0.321777,
-    "brier_score": 0.195467,
-    "ece_10_bin": 0.15184
+    "brier_score": 0.195554,
+    "ece_10_bin": 0.152096
   },
   "test_quality": {
-    "roc_auc": 0.754584,
-    "average_precision": 0.654613,
+    "roc_auc": 0.754409,
+    "average_precision": 0.654409,
     "top_decile_lift": 2.580516,
     "top_decile_positive_rate": 0.839286,
     "base_positive_rate": 0.325239,
-    "brier_score": 0.185011,
-    "ece_10_bin": 0.102124
+    "brier_score": 0.184974,
+    "ece_10_bin": 0.101705
   },
   "revenue_validation_quality": {
-    "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
     "row_count": 1420,
-    "rmse": 2850.332453,
-    "mae": 797.826111,
-    "mape": 2.725048,
-    "mape_note": "MAPE excludes rows with zero actual revenue.",
-    "status": "ok"
+    "rmse": 2872.575729,
+    "mae": 800.801228,
+    "mape": 2.729059
   },
   "revenue_test_quality": {
-    "evaluation_population": "test_rows_with_label_purchase_90d_equals_1",
     "row_count": 1460,
-    "rmse": 1778.287655,
-    "mae": 658.667894,
-    "mape": 1.78058,
-    "mape_note": "MAPE excludes rows with zero actual revenue."
+    "rmse": 1814.50356,
+    "mae": 658.553037,
+    "mape": 1.778582
   },
   "propensity_model_candidates": [
     {
-      "model_name": "logistic_regression",
-      "roc_auc": 0.7592,
-      "average_precision": 0.649997
-    },
-    {
       "model_name": "xgboost",
-      "roc_auc": 0.767123,
-      "average_precision": 0.657846
-    }
-  ],
-  "revenue_model_candidates": [
-    {
-      "model_name": "xgboost_regressor_conditional_revenue",
-      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
-      "row_count": 1420,
-      "rmse": 2850.332453,
-      "mae": 797.826111,
-      "mape": 2.725048,
-      "mape_note": "MAPE excludes rows with zero actual revenue.",
-      "status": "ok"
-    },
-    {
-      "model_name": "constant_mean_positive_revenue",
-      "evaluation_population": "validation_rows_with_label_purchase_90d_equals_1",
-      "row_count": 1420,
-      "rmse": 3549.812781,
-      "mae": 1057.377833,
-      "mape": 4.564627,
-      "mape_note": "MAPE excludes rows with zero actual revenue.",
-      "status": "ok"
+      "roc_auc": 0.767346,
+      "average_precision": 0.658268,
+      "top_decile_lift": 2.515795,
+      "top_decile_positive_rate": 0.809524,
+      "base_positive_rate": 0.321777,
+      "brier_score": 0.195554,
+      "ece_10_bin": 0.152096
     }
   ],
   "model_validation": {

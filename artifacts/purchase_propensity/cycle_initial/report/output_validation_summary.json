@@ -12,13 +12,13 @@
       "check": "candidate_metrics_in_bounds",
       "description": "Model metrics should be valid probabilities in [0, 1].",
       "passed": true,
-      "detail": "candidate_count=2"
+      "detail": "candidate_count=1"
     },
     {
       "check": "ml_beats_random_revenue_per_user",
       "description": "ML targeting should match or outperform random baseline on holdout revenue per targeted user.",
       "passed": true,
-      "detail": "ml=1429.725122, random=505.785050"
+      "detail": "ml=1432.030412, random=505.785050"
     },
     {
       "check": "budget_policy_validation_and_test_outputs_present",

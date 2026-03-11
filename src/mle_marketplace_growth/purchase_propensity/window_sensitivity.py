@@ -4,19 +4,84 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import date
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
+from mle_marketplace_growth.purchase_propensity.constants import ALLOWED_PREDICTION_WINDOWS, SPEND_CAP_QUANTILE
+from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _write_window_sensitivity_artifact,
+    _write_window_validation_dashboard,
+)
 from mle_marketplace_growth.purchase_propensity.helpers.data import _read_parquet_panel
 
-ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
-FIXED_WINDOWS = [30, 60, 90]
+FIXED_WINDOWS = sorted(ALLOWED_PREDICTION_WINDOWS)
 SENSITIVITY_MODELS = ["logistic_regression", "xgboost"]
 DEFAULT_LOOKBACK_FOR_WINDOW_SWEEP = 90
 LOOKBACK_SWEEP = [60, 90, 120]
+
+
+def _load_train_metrics(metrics_path: Path) -> dict:
+    """What: Load one `train_metrics.json` artifact from a train.py run.
+    Why: Reuses train.py outputs as the source of truth for sweep comparison.
+    """
+    return json.loads(metrics_path.read_text(encoding="utf-8"))
+
+
+def _build_model_result_row(metrics: dict, model_name: str) -> dict:
+    """What: Build one normalized model-result row from train.py metrics.
+    Why: Keeps sweep aggregation schema consistent across model runs.
+    """
+    validation_quality = metrics.get("validation_quality", {})
+    return {
+        "status": "ok",
+        "model_name": str(metrics.get("selected_propensity_model_name", model_name)),
+        "roc_auc": round(float(validation_quality.get("roc_auc", 0.0)), 6),
+        "average_precision": round(float(validation_quality.get("average_precision", 0.0)), 6),
+        "top_decile_lift": round(float(validation_quality.get("top_decile_lift", 0.0)), 6),
+        "brier_score": round(float(validation_quality.get("brier_score", 1.0)), 6),
+        "ece_10_bin": round(float(validation_quality.get("ece_10_bin", 1.0)), 6),
+        "train_rows": int(metrics.get("train_rows", 0)),
+        "validation_rows": int(metrics.get("validation_rows", 0)),
+        "positive_rate_train": None,
+        "positive_rate_validation": round(float(validation_quality.get("base_positive_rate", 0.0)), 6),
+        "spend_cap_value": round(float(metrics.get("spend_cap_value", 0.0)), 6),
+        "calibration_method": str(metrics.get("calibration_method", "sigmoid")),
+    }
+
+
+def _failed_model_result_row(model_name: str, error_message: str) -> dict:
+    """What: Build a placeholder row when one model/window combo is untrainable.
+    Why: Lets sensitivity continue and produce a complete artifact instead of aborting.
+    """
+    return {
+        "status": "invalid",
+        "model_name": model_name,
+        "roc_auc": 0.0,
+        "average_precision": 0.0,
+        "top_decile_lift": 0.0,
+        "brier_score": 1.0,
+        "ece_10_bin": 1.0,
+        "train_rows": 0,
+        "validation_rows": 0,
+        "positive_rate_train": None,
+        "positive_rate_validation": 0.0,
+        "spend_cap_value": 0.0,
+        "calibration_method": "sigmoid",
+        "train_error": error_message,
+    }
+
+
+def _compact_subprocess_error(error: subprocess.CalledProcessError) -> str:
+    """What: Build a short, artifact-friendly error string from a failed subprocess run.
+    Why: Keeps console logs readable while preserving failure context in JSON output.
+    """
+    stderr_text = (error.stderr or "").strip()
+    last_line = stderr_text.splitlines()[-1] if stderr_text else ""
+    if last_line:
+        return f"returncode={error.returncode}; {last_line}"
+    return f"returncode={error.returncode}; command failed"
 
 
 def _run_train_eval(
@@ -25,7 +90,9 @@ def _run_train_eval(
     feature_lookback_days: int,
     output_dir: Path,
 ) -> dict:
-    """Run train.py for both models on one (prediction_window, lookback) combo."""
+    """What: Run train.py for both propensity models on one window/lookback combo.
+    Why: Compares model quality under the same data slice and feature profile.
+    """
     model_results = []
     for model_name in SENSITIVITY_MODELS:
         model_output_dir = output_dir / model_name
@@ -39,108 +106,68 @@ def _run_train_eval(
             "--force-propensity-model", model_name,
         ]
         print("Running:", " ".join(command))
-        subprocess.run(command, check=True)
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as error:
+            model_results.append(_failed_model_result_row(model_name, _compact_subprocess_error(error)))
+            continue
 
         metrics_path = model_output_dir / "train_metrics.json"
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        validation_quality = metrics.get("validation_quality", {})
-        model_results.append(
-            {
-                "model_name": str(metrics.get("selected_propensity_model_name", model_name)),
-                "roc_auc": round(float(validation_quality.get("roc_auc", 0.0)), 6),
-                "average_precision": round(float(validation_quality.get("average_precision", 0.0)), 6),
-                "top_decile_lift": round(float(validation_quality.get("top_decile_lift", 0.0)), 6),
-                "brier_score": round(float(validation_quality.get("brier_score", 1.0)), 6),
-                "ece_10_bin": round(float(validation_quality.get("ece_10_bin", 1.0)), 6),
-                "train_rows": int(metrics.get("train_rows", 0)),
-                "validation_rows": int(metrics.get("validation_rows", 0)),
-                "positive_rate_train": None,
-                "positive_rate_validation": round(float(validation_quality.get("base_positive_rate", 0.0)), 6),
-                "spend_cap_value": round(float(metrics.get("spend_cap_value", 0.0)), 6),
-                "calibration_method": str(metrics.get("calibration_method", "sigmoid")),
-            }
-        )
+        metrics = _load_train_metrics(metrics_path)
+        model_results.append(_build_model_result_row(metrics, model_name))
 
     best_model = max(model_results, key=lambda row: row["average_precision"])["model_name"]
     return {"best_model": best_model, "model_results": model_results}
 
 
 def _best_by_average_precision(model_results: list[dict]) -> dict:
-    """Return the model row with highest average precision."""
+    """What: Return the model result row with highest validation average precision.
+    Why: Uses one deterministic selection rule across all sweep outputs.
+    """
     return max(model_results, key=lambda row: float(row.get("average_precision", 0.0)))
 
 
 # ===== Label + Metric Utilities =====
-def _load_positive_event_dates(path: Path) -> dict[str, list[date]]:
-    events_df = _read_parquet_panel(path, allow_empty=True)
+def _inter_purchase_gap_days(events_path: Path) -> list[int]:
+    """What: Compute day differences between consecutive positive-purchase events per user.
+    Why: Summarizes repurchase cadence as a diagnostic for prediction-window selection.
+    Downstream use in this repo:
+    - `_build_output` converts these gaps into `prediction_window_validation`
+      `inter_purchase_gap_coverage` stats.
+    - Coverage for a candidate window is computed as
+      mean(inter_purchase_gap_days <= window_days).
+    - Those stats are written to `window_sensitivity.json` as supporting evidence for
+      the freeze decision (alongside validation model metrics).
+
+    Example:
+    If one user has purchases on 2026-01-01, 2026-01-10, and 2026-01-25,
+    this contributes gaps [9, 15] days.
+    """
+    events_df = _read_parquet_panel(events_path, allow_empty=True)
     if events_df.empty:
-        return {}
-    events_by_user: dict[str, list[date]] = {}
-    for row in events_df.itertuples(index=False):
-        user_id = str(row.user_id)
-        if not user_id:
-            continue
-        if float(row.quantity) <= 0:
-            continue
-        event_day = date.fromisoformat(str(row.event_date))
-        events_by_user.setdefault(user_id, []).append(event_day)
-    for user_id in events_by_user:
-        events_by_user[user_id].sort()
-    return events_by_user
+        return []
 
+    # Keep only positive-quantity events and the fields needed for gap computation.
+    filtered = events_df.loc[events_df["quantity"].astype(float) > 0, ["user_id", "event_date"]].copy()
+    # Normalize user ids and drop blank identifiers to avoid invalid groups.
+    filtered["user_id"] = filtered["user_id"].astype(str)
+    filtered = filtered.loc[filtered["user_id"] != ""]
+    # Parse event dates and normalize to day-level timestamps.
+    filtered["event_day"] = pd.to_datetime(filtered["event_date"], errors="coerce").dt.normalize()
+    filtered = filtered.dropna(subset=["event_day"])
 
-def _inter_purchase_gap_days(events_by_user: dict[str, list[date]]) -> list[int]:
-    gaps = []
-    for events in events_by_user.values():
-        if len(events) < 2:
-            continue
-        for left, right in zip(events[:-1], events[1:], strict=True):
-            gap_days = (right - left).days
-            if gap_days > 0:
-                gaps.append(gap_days)
-    return gaps
-
-
-# ===== Visualization =====
-def _write_validation_dashboard(output: dict, output_path: Path) -> None:
-    prediction_rows = output.get("window_sensitivity", [])
-    lookback_rows = output.get("feature_window_validation", [])
-    if not prediction_rows or not lookback_rows:
-        return
-
-    window_axis = [row["window_days"] for row in prediction_rows]
-    best_window_metrics = [
-        max(row["model_results"], key=lambda item: item["average_precision"]) for row in prediction_rows
-    ]
-    lookback_axis = [row["feature_lookback_days"] for row in lookback_rows]
-    best_lookback_metrics = [
-        max(row["model_results"], key=lambda item: item["average_precision"]) for row in lookback_rows
-    ]
-
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-    metric_specs = [
-        ("average_precision", "PR-AUC"),
-        ("top_decile_lift", "Top-Decile Lift"),
-        ("brier_score", "Brier Score"),
-        ("ece_10_bin", "ECE (10-bin)"),
-    ]
-    for axis, (metric_key, title) in zip(axes.flat, metric_specs, strict=True):
-        axis.plot(window_axis, [row[metric_key] for row in best_window_metrics], marker="o")
-        axis.plot(lookback_axis, [row[metric_key] for row in best_lookback_metrics], marker="o")
-        axis.set_title(title)
-        axis.grid(True, alpha=0.3)
-        axis.set_xlabel("Window days")
-    axes[0, 0].legend(["Prediction window", "Feature lookback"], loc="best")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=140)
-    plt.close(fig)
-    print(f"Wrote window validation dashboard: {output_path}")
+    # Sort by user/day so per-user previous-event shift yields consecutive gaps.
+    filtered = filtered.sort_values(["user_id", "event_day"], kind="stable")
+    previous_event_day = filtered.groupby("user_id")["event_day"].shift(1)
+    # Convert date deltas to integer days and keep strictly positive gaps only.
+    gap_days = (filtered["event_day"] - previous_event_day).dt.days
+    return gap_days.loc[gap_days > 0].astype(int).tolist()
 
 
 def _resolve_inputs(args: argparse.Namespace) -> tuple[list[Path], Path]:
-    """Resolve and validate feature/event inputs."""
+    """What: Resolve CLI paths and validate required input files exist.
+    Why: Fails fast before launching train.py subprocess runs.
+    """
     feature_paths = [Path(path) for path in args.input_path]
     events_path = Path(args.events_path)
     missing_features = [path for path in feature_paths if not path.exists()]
@@ -150,7 +177,9 @@ def _resolve_inputs(args: argparse.Namespace) -> tuple[list[Path], Path]:
 
 
 def _run_sensitivity_sweep(feature_paths: list[Path], sweep_root: Path) -> tuple[list[dict], list[dict]]:
-    """Run prediction-window and lookback-window sensitivity sweeps."""
+    """What: Run prediction-window and feature-lookback sensitivity sweeps.
+    Why: Produces comparable validation outputs for freeze-decision selection.
+    """
     eval_cache: dict[tuple[int, int], dict] = {}
 
     def _evaluate_combo(prediction_window_days: int, feature_lookback_days: int) -> dict:
@@ -198,11 +227,14 @@ def _build_output(
     sensitivity_rows: list[dict],
     feature_window_validation: list[dict],
 ) -> dict:
-    """Build final JSON payload including freeze decision and diagnostics."""
+    """What: Build the final window_sensitivity JSON payload.
+    Why: Stores diagnostics, sweep results, and freeze decision in one artifact.
+    """
     prediction_window_validation = []
     if inter_purchase_gap_days:
         for window_days in FIXED_WINDOWS:
             gap_array = np.asarray(inter_purchase_gap_days, dtype=float)
+            # Formula for this window: mean(gap_days <= window_days)
             coverage = float((gap_array <= window_days).mean())
             prediction_window_validation.append(
                 {
@@ -234,7 +266,7 @@ def _build_output(
         "input_paths": [str(path) for path in feature_paths],
         "events_path": str(events_path),
         "split_strategy": "out_of_time_10_1_1_train_dates=from_train_metrics",
-        "spend_cap_quantile": 0.99,
+        "spend_cap_quantile": SPEND_CAP_QUANTILE,
         "calibration_method": "sigmoid",
         "note": "offline sensitivity only; not causal promotional incrementality evidence",
         "inter_purchase_distribution": {
@@ -253,6 +285,9 @@ def _build_output(
 
 # ===== Entry Point =====
 def main() -> None:
+    """What: Orchestrate window sensitivity runs and write JSON/plot artifacts.
+    Why: Automates model/window freeze decision under a fixed evaluation recipe.
+    """
     parser = argparse.ArgumentParser(description="Run 30/60/90-day sensitivity for propensity models.")
     parser.add_argument("--input-path", action="append", required=True, help="Path to strict training-panel parquet (repeat --input-path for multi-snapshot panel)")
     parser.add_argument("--events-path", default="data/silver/transactions_line_items/transactions_line_items.parquet", help="Path to silver transactions parquet (for recalculating labels by window)")
@@ -268,8 +303,7 @@ def main() -> None:
         raise ValueError("--windows must be exactly 30,60,90 for strict architecture alignment.")
 
     # ===== Diagnostics source =====
-    events_by_user = _load_positive_event_dates(events_path)
-    inter_purchase_gap_days = _inter_purchase_gap_days(events_by_user)
+    inter_purchase_gap_days = _inter_purchase_gap_days(events_path)
 
     # ===== Run Train-Eval Sweeps =====
     output_json_path = Path(args.output_json)
@@ -282,10 +316,9 @@ def main() -> None:
         sensitivity_rows=sensitivity_rows,
         feature_window_validation=feature_window_validation,
     )
-    output_json_path.parent.mkdir(parents=True, exist_ok=True)
-    output_json_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    _write_window_sensitivity_artifact(output_json_path, output)
     print(f"Wrote sensitivity summary: {output_json_path}")
-    _write_validation_dashboard(output, Path(args.output_plot))
+    _write_window_validation_dashboard(output, Path(args.output_plot))
 
 
 if __name__ == "__main__":

@@ -83,7 +83,8 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             config_path.write_text(
                 "output_root: " + str(output_root) + "\n"
                 "panel_end_date: '2011-11-09'\n"
-                "window_selection_mode: fixed\n",
+                "window_selection_mode: fixed\n"
+                "force_propensity_model: logistic_regression\n",
                 encoding="utf-8",
             )
             for as_of_date in run_pipeline._generate_snapshot_dates(run_pipeline.date.fromisoformat(self.PANEL_END_DATE)):

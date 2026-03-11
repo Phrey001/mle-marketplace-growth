@@ -1,16 +1,23 @@
 """Train purchase propensity scoring models and offline policy backtest."""
 
 import argparse
-import csv
 import hashlib
-import json
-import pickle
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, roc_auc_score
 
+from mle_marketplace_growth.purchase_propensity.constants import (
+    ALLOWED_FEATURE_LOOKBACK_WINDOWS,
+    ALLOWED_PREDICTION_WINDOWS,
+    SPEND_CAP_QUANTILE,
+)
+from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _build_train_metrics_payload,
+    _dump_model_artifact,
+    _write_metrics_artifact,
+    _write_predictions_csv,
+)
 from mle_marketplace_growth.purchase_propensity.helpers.data import (
     _load_snapshot_rows,
     _quantile,
@@ -24,9 +31,49 @@ from mle_marketplace_growth.purchase_propensity.helpers.modeling import (
     _fit_validation_propensity_model_wrapper,
 )
 
-ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
-ALLOWED_FEATURE_LOOKBACK_WINDOWS = {60, 90, 120}
-SPEND_CAP_QUANTILE = 0.99
+def _stable_ratio(key: str) -> float:
+    """What: Deterministically map a string key to a pseudo-random ratio in [0, 1).
+    Why: Keeps random-baseline ranking reproducible across runs and tests.
+    """
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16) / float(0xFFFFFFFFFFFFFFFF)
+
+
+def _split_rows(rows: list[dict]) -> tuple[list[dict], list[dict], list[dict], str]:
+    """What: Backward-compatible row-list split helper using strict 10/1/1 date protocol.
+    Why: Preserves legacy unit-test imports while train flow now uses DataFrames directly.
+    """
+    df = pd.DataFrame(rows)
+    train_df, validation_df, test_df, split_description = _split_df_rows_10_1_1(df, date_column="as_of_date")
+    return (
+        train_df.to_dict(orient="records"),
+        validation_df.to_dict(orient="records"),
+        test_df.to_dict(orient="records"),
+        split_description,
+    )
+
+
+def _load_training_rows(
+    input_path: Path,
+    feature_columns: list[str],
+    purchase_label_column: str,
+    revenue_label_column: str,
+) -> list[dict]:
+    """What: Backward-compatible loader that returns row dicts for tests.
+    Why: Keeps old test helpers available after migration to typed DataFrame loading.
+    """
+    try:
+        typed_df = _load_snapshot_rows(
+            input_path,
+            feature_columns=feature_columns,
+            purchase_label_column=purchase_label_column,
+            revenue_label_column=revenue_label_column,
+        )
+    except ValueError as error:
+        if str(error).startswith("Missing required columns"):
+            raise KeyError(str(error)) from error
+        raise
+    return typed_df.to_dict(orient="records")
 
 
 def _apply_spend_cap(df: pd.DataFrame, spend_feature: str, spend_cap_value: float) -> None:
@@ -53,7 +100,7 @@ def _apply_feature_encoding(feature_df: pd.DataFrame, encoded_columns: list[str]
 
 
 def _policy_scores(
-    df: pd.DataFrame,
+    df: pd.DataFrame | list[dict],
     propensity_scores: np.ndarray,
     predicted_conditional_revenue: np.ndarray,
     feature_lookback_days: int,
@@ -61,10 +108,17 @@ def _policy_scores(
     """What: Build expected-value, random, and RFM policy scores per row.
     Why: Enables side-by-side offline policy comparison on the same population.
     """
-    def _stable_ratio(key: str) -> float:
-        """What: Deterministically map a key to a pseudo-random ratio in [0, 1)."""
-        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        return int(digest[:16], 16) / float(0xFFFFFFFFFFFFFFFF)
+    if not isinstance(df, pd.DataFrame):
+        # Backward-compatible path for tests that pass list[dict] rows.
+        normalized_rows: list[dict] = []
+        for row in df:
+            if "features" in row and isinstance(row["features"], dict):
+                normalized_rows.append({k: v for k, v in row.items() if k != "features"} | row["features"])
+            else:
+                normalized_rows.append(row)
+        df = pd.DataFrame(normalized_rows)
+    propensity_scores = np.asarray(propensity_scores, dtype=float)
+    predicted_conditional_revenue = np.asarray(predicted_conditional_revenue, dtype=float)
 
     # A) Expected-value policy: propensity * predicted conditional revenue.
     expected_value_scores = (propensity_scores * predicted_conditional_revenue).tolist()
@@ -228,130 +282,69 @@ def main() -> None:
     validation_scores_path = output_dir / "validation_predictions.csv"  # Row-level validation predictions for review/debug/policy replay.
     test_scores_path = output_dir / "test_predictions.csv"  # Row-level test predictions for final offline backtest analysis.
 
-    # Model object artifact: what was trained and how to reproduce feature transforms.
-    with model_path.open("wb") as file:
-        pickle.dump(
-            {
-                "propensity_model": selected_model,
-                "propensity_model_name": selected_model_name,
-                "revenue_model": revenue_model,
-                "revenue_model_name": revenue_model_name,
-                "revenue_fallback_value": round(float(revenue_fallback_value), 6),
-                "feature_columns": feature_columns,
-                "encoded_feature_columns": train_val_encoded_feature_columns,
-                "spend_cap_value": float(spend_cap_value),
-                "spend_cap_quantile": float(SPEND_CAP_QUANTILE),
-                "calibration_method": "sigmoid",
-                "prediction_window_days": args.prediction_window_days,
-                "feature_lookback_days": args.feature_lookback_days,
-                "target_definition": f"purchase_in_next_{args.prediction_window_days}_days",
-                "expected_value_definition": f"propensity_score * predicted_conditional_revenue_{args.prediction_window_days}d",
-            },
-            file,
-        )
-
-    # Metrics artifact: compact run report used by pipeline selection and documentation.
-    metrics_path.write_text(
-        json.dumps(
-            {
-                "input_paths": [str(path) for path in input_paths],
-                "target_definition": purchase_label_column,
-                "revenue_backtest_label": revenue_label_column,
-                "prediction_window_days": args.prediction_window_days,
-                "feature_lookback_days": args.feature_lookback_days,
-                "validation_split_description": split_description,
-                "spend_cap_quantile": SPEND_CAP_QUANTILE,
-                "spend_cap_value": round(float(spend_cap_value), 6),
-                "calibration_method": "sigmoid",
-                "revenue_model_name": revenue_model_name,
-                "revenue_fallback_value": round(float(revenue_fallback_value), 6),
-                "train_rows": len(train_df),
-                "validation_rows": len(validation_df),
-                "test_rows": len(test_df),
-                "selected_model_name": selected_model_name,
-                "selected_propensity_model_name": selected_model_name,
-                "selected_revenue_model_name": revenue_model_name,
-                "validation_quality": {
-                    "roc_auc": round(selected_roc_auc, 6),
-                    "average_precision": round(selected_average_precision, 6),
-                    "top_decile_lift": round(float(validation_quality_metrics["top_decile_lift"]), 6),
-                    "top_decile_positive_rate": round(float(validation_quality_metrics["top_decile_positive_rate"]), 6),
-                    "base_positive_rate": round(float(validation_quality_metrics["base_positive_rate"]), 6),
-                    "brier_score": round(float(validation_quality_metrics["brier_score"]), 6),
-                    "ece_10_bin": round(float(validation_quality_metrics["ece_10_bin"]), 6),
-                },
-                "test_quality": {
-                    "roc_auc": round(float(roc_auc_score(test_purchase_labels, test_propensity_scores)), 6),
-                    "average_precision": round(float(average_precision_score(test_purchase_labels, test_propensity_scores)), 6),
-                    "top_decile_lift": round(float(test_quality_metrics["top_decile_lift"]), 6),
-                    "top_decile_positive_rate": round(float(test_quality_metrics["top_decile_positive_rate"]), 6),
-                    "base_positive_rate": round(float(test_quality_metrics["base_positive_rate"]), 6),
-                    "brier_score": round(float(test_quality_metrics["brier_score"]), 6),
-                    "ece_10_bin": round(float(test_quality_metrics["ece_10_bin"]), 6),
-                },
-                "revenue_validation_quality": revenue_validation_quality,
-                "revenue_test_quality": revenue_test_quality,
-                "propensity_model_candidates": [
-                    {
-                        "model_name": selected_model_name,
-                        "roc_auc": round(selected_roc_auc, 6),
-                        "average_precision": round(selected_average_precision, 6),
-                        "top_decile_lift": round(float(validation_quality_metrics["top_decile_lift"]), 6),
-                        "top_decile_positive_rate": round(float(validation_quality_metrics["top_decile_positive_rate"]), 6),
-                        "base_positive_rate": round(float(validation_quality_metrics["base_positive_rate"]), 6),
-                        "brier_score": round(float(validation_quality_metrics["brier_score"]), 6),
-                        "ece_10_bin": round(float(validation_quality_metrics["ece_10_bin"]), 6),
-                    }
-                ],
-                "model_validation": {
-                    "selected_propensity_model_name": selected_model_name,
-                    "selected_revenue_model_name": revenue_model_name,
-                },
-                "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality",
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+    _dump_model_artifact(
+        model_path,
+        selected_model,
+        selected_model_name,
+        revenue_model,
+        revenue_model_name,
+        revenue_fallback_value,
+        feature_columns,
+        train_val_encoded_feature_columns,
+        spend_cap_value,
+        args.prediction_window_days,
+        args.feature_lookback_days,
     )
 
-    # Validation predictions artifact for slice-level inspection and QA.
-    with validation_scores_path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["user_id", "as_of_date", purchase_label_column, revenue_label_column, "propensity_score", f"predicted_conditional_revenue_{args.prediction_window_days}d", "expected_value_score", "random_policy_score", "rfm_policy_score"])
-        for index in range(len(validation_df)):
-            writer.writerow(
-                [
-                    validation_df["user_id"].iat[index],
-                    validation_df["as_of_date"].iat[index],
-                    int(validation_df["purchase_label"].iat[index]),
-                    round(float(validation_df["revenue_label"].iat[index]), 6),
-                    round(float(validation_propensity_scores[index]), 6),
-                    round(float(validation_revenue_predictions[index]), 6),
-                    round(float(validation_expected_value_scores[index]), 6),
-                    round(float(validation_random_scores[index]), 6),
-                    round(float(validation_rfm_scores[index]), 6),
-                ]
-            )
+    metrics_payload = _build_train_metrics_payload(
+        input_paths,
+        purchase_label_column,
+        revenue_label_column,
+        args.prediction_window_days,
+        args.feature_lookback_days,
+        split_description,
+        spend_cap_value,
+        revenue_model_name,
+        revenue_fallback_value,
+        len(train_df),
+        len(validation_df),
+        len(test_df),
+        selected_model_name,
+        selected_roc_auc,
+        selected_average_precision,
+        validation_quality_metrics,
+        test_purchase_labels,
+        test_propensity_scores,
+        test_quality_metrics,
+        revenue_validation_quality,
+        revenue_test_quality,
+    )
+    _write_metrics_artifact(metrics_path, metrics_payload)
 
-    # Test predictions artifact for final offline comparison across targeting policies.
-    with test_scores_path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["user_id", "as_of_date", purchase_label_column, revenue_label_column, "propensity_score", f"predicted_conditional_revenue_{args.prediction_window_days}d", "expected_value_score", "random_policy_score", "rfm_policy_score"])
-        for index in range(len(test_df)):
-            writer.writerow(
-                [
-                    test_df["user_id"].iat[index],
-                    test_df["as_of_date"].iat[index],
-                    int(test_df["purchase_label"].iat[index]),
-                    round(float(test_df["revenue_label"].iat[index]), 6),
-                    round(float(test_propensity_scores[index]), 6),
-                    round(float(test_predicted_conditional_revenue[index]), 6),
-                    round(float(test_expected_value_scores[index]), 6),
-                    round(float(test_random_scores[index]), 6),
-                    round(float(test_rfm_scores[index]), 6),
-                ]
-            )
+    _write_predictions_csv(
+        validation_scores_path,
+        validation_df,
+        purchase_label_column,
+        revenue_label_column,
+        args.prediction_window_days,
+        validation_propensity_scores,
+        validation_revenue_predictions,
+        validation_expected_value_scores,
+        validation_random_scores,
+        validation_rfm_scores,
+    )
+    _write_predictions_csv(
+        test_scores_path,
+        test_df,
+        purchase_label_column,
+        revenue_label_column,
+        args.prediction_window_days,
+        test_propensity_scores,
+        test_predicted_conditional_revenue,
+        test_expected_value_scores,
+        test_random_scores,
+        test_rfm_scores,
+    )
 
     print(f"Wrote model: {model_path}")
     print(f"Wrote metrics: {metrics_path}")

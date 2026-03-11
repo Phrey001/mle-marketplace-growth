@@ -1,7 +1,7 @@
 """Run the purchase propensity pipeline end-to-end from one command."""
 
 # Special: orchestrates sensitivity -> train -> policy eval -> validation/report in one run.
-# Suggested review order: run_pipeline.py -> train.py -> helpers/* -> policy_budget_evaluation.py -> validate_outputs.py -> window_sensitivity.py.
+# Suggested review order: run_pipeline.py -> train.py -> helpers/* -> policy_budget_evaluation.py -> validate_artifact_outputs.py -> window_sensitivity.py.
 
 import argparse
 import json
@@ -12,22 +12,29 @@ from pathlib import Path
 
 from dateutil.relativedelta import relativedelta
 from mle_marketplace_growth.feature_store.build_helpers import load_yaml_defaults
-from mle_marketplace_growth.purchase_propensity.validate_outputs import run_validation, write_interpretation
-
-ALLOWED_PREDICTION_WINDOWS = {30, 60, 90}
-ALLOWED_FEATURE_LOOKBACK_WINDOWS = {60, 90, 120}
+from mle_marketplace_growth.purchase_propensity.constants import (
+    ALLOWED_FEATURE_LOOKBACK_WINDOWS,
+    ALLOWED_PREDICTION_WINDOWS,
+)
+from mle_marketplace_growth.purchase_propensity.validate_artifact_outputs import run_validation, write_interpretation
 
 
 # ===== Path + Date Helpers =====
 def _generate_snapshot_dates(panel_end_date: date) -> list[str]:
+    """What: Build 12 monthly as-of dates ending at panel_end_date.
+    Why: Enforces the strict 10/1/1 split panel expected by train.py.
+    """
     # 12 inclusive snapshots: offsets -11..0 from the end date.
     snapshots = [panel_end_date + relativedelta(months=offset) for offset in range(-11, 1)]
-    if snapshots[-1] != panel_end_date.isoformat():
+    if snapshots[-1] != panel_end_date:
         raise ValueError("Derived monthly snapshot panel does not end on --panel-end-date")
     return [snapshot.isoformat() for snapshot in snapshots]
 
 
 def _run_module(module: str, *args: object) -> None:
+    """What: Execute a Python module as subprocess with forwarded CLI arguments.
+    Why: Keeps orchestration readable while preserving module-level CLIs.
+    """
     command = [sys.executable, "-m", module, *map(str, args)]
     print("Running:", " ".join(command))
     subprocess.run(command, check=True)
@@ -35,6 +42,9 @@ def _run_module(module: str, *args: object) -> None:
 
 # ===== Entry Point =====
 def main() -> None:
+    """What: Orchestrate sensitivity, train, policy-eval, and artifact validation.
+    Why: Provides one deterministic entrypoint for end-to-end offline evaluation.
+    """
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
     parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
@@ -90,8 +100,11 @@ def main() -> None:
             f"(example missing path: {missing_train_paths[0]})."
         )
     # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
-    expect_window_sensitivity = window_selection_mode == "sensitivity"
-    if expect_window_sensitivity:
+    # Mode-dependent behavior:
+    # - sensitivity mode: run window_sensitivity.py and require its artifact in validation.
+    # - fixed mode: skip sensitivity run and do not require sensitivity artifact.
+    require_window_sensitivity_artifact = window_selection_mode == "sensitivity"
+    if require_window_sensitivity_artifact:
         sensitivity_args: list[str | Path] = [
             *[arg for path in train_paths for arg in ("--input-path", path)],
             "--events-path", output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
@@ -155,7 +168,7 @@ def main() -> None:
     summary_path = report_dir / "output_validation_summary.json"
     passed, summary = run_validation(
         artifacts_dir=offline_eval_dir,
-        expect_window_sensitivity=expect_window_sensitivity,
+        expect_window_sensitivity=require_window_sensitivity_artifact,
         output_json=summary_path,
     )
     if not passed:
@@ -165,7 +178,7 @@ def main() -> None:
     interpretation_path = write_interpretation(
         artifacts_dir=offline_eval_dir,
         output_md=report_dir / "output_interpretation.md",
-        expect_window_sensitivity=expect_window_sensitivity,
+        expect_window_sensitivity=require_window_sensitivity_artifact,
     )
     print(f"Wrote output interpretation: {interpretation_path}")
 

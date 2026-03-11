@@ -1,0 +1,79 @@
+{
+  "input_paths": [
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2009-12-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-01-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-02-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-03-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-04-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-05-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-06-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-07-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-08-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-09-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-10-01/propensity_train_dataset.parquet",
+    "data/gold/feature_store/purchase_propensity/propensity_train_dataset/as_of_date=2010-11-01/propensity_train_dataset.parquet"
+  ],
+  "target_definition": "label_purchase_30d",
+  "revenue_backtest_label": "label_net_revenue_30d",
+  "prediction_window_days": 30,
+  "feature_lookback_days": 60,
+  "validation_split_description": "out_of_time_10_1_1_train_dates=['2009-12-01', '2010-01-01', '2010-02-01', '2010-03-01', '2010-04-01', '2010-05-01', '2010-06-01', '2010-07-01', '2010-08-01', '2010-09-01'];validation_dates=['2010-10-01'];test_dates=['2010-11-01']",
+  "spend_cap_quantile": 0.99,
+  "spend_cap_value": 4952.328,
+  "calibration_method": "sigmoid",
+  "revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "revenue_fallback_value": 755.090067,
+  "train_rows": 21721,
+  "validation_rows": 3649,
+  "test_rows": 4022,
+  "selected_model_name": "logistic_regression",
+  "selected_propensity_model_name": "logistic_regression",
+  "selected_revenue_model_name": "xgboost_regressor_conditional_revenue",
+  "validation_quality": {
+    "roc_auc": 0.6587,
+    "average_precision": 0.496428,
+    "top_decile_lift": 1.961359,
+    "top_decile_positive_rate": 0.593407,
+    "base_positive_rate": 0.302549,
+    "brier_score": 0.196115,
+    "ece_10_bin": 0.051102
+  },
+  "test_quality": {
+    "roc_auc": 0.680498,
+    "average_precision": 0.539059,
+    "top_decile_lift": 2.020898,
+    "top_decile_positive_rate": 0.656716,
+    "base_positive_rate": 0.324963,
+    "brier_score": 0.20069,
+    "ece_10_bin": 0.05598
+  },
+  "revenue_validation_quality": {
+    "row_count": 1104,
+    "rmse": 1270.006622,
+    "mae": 415.876928,
+    "mape": 1.096436
+  },
+  "revenue_test_quality": {
+    "row_count": 1307,
+    "rmse": 1150.972676,
+    "mae": 437.654177,
+    "mape": 1.131465
+  },
+  "propensity_model_candidates": [
+    {
+      "model_name": "logistic_regression",
+      "roc_auc": 0.6587,
+      "average_precision": 0.496428,
+      "top_decile_lift": 1.961359,
+      "top_decile_positive_rate": 0.593407,
+      "base_positive_rate": 0.302549,
+      "brier_score": 0.196115,
+      "ece_10_bin": 0.051102
+    }
+  ],
+  "model_validation": {
+    "selected_propensity_model_name": "logistic_regression",
+    "selected_revenue_model_name": "xgboost_regressor_conditional_revenue"
+  },
+  "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality"
+}

@@ -39,7 +39,7 @@ Datetime ownership/bounds:
 | Model training | `mle_marketplace_growth.purchase_propensity.train` | `offline_eval/propensity_model.pkl`, `offline_eval/train_metrics.json`, `offline_eval/validation_predictions.csv`, `offline_eval/test_predictions.csv` |
 | Structural sensitivity (initial) | `mle_marketplace_growth.purchase_propensity.window_sensitivity` | `offline_eval/window_sensitivity.json`, `offline_eval/window_validation_dashboard.png` |
 | Policy backtest | `mle_marketplace_growth.purchase_propensity.policy_budget_evaluation` | `offline_eval/offline_policy_budget_validation.json`, `offline_eval/offline_policy_budget_test.json` |
-| Artifact checks/report text | `mle_marketplace_growth.purchase_propensity.validate_outputs` | `report/output_validation_summary.json`, `report/output_interpretation.md` |
+| Artifact checks/report text | `mle_marketplace_growth.purchase_propensity.validate_artifact_outputs` | `report/output_validation_summary.json`, `report/output_interpretation.md` |
 | Serving-style batch scoring | `mle_marketplace_growth.purchase_propensity.predict` | `serving_batch/as_of_date=YYYY-MM-DD/prediction_scores.csv` |
 
 ## Model/Window Contract

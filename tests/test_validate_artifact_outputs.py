@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mle_marketplace_growth.purchase_propensity.validate_outputs import run_validation
+from mle_marketplace_growth.purchase_propensity.validate_artifact_outputs import run_validation
 
 
 class ValidateOutputsTest(unittest.TestCase):

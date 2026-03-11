@@ -9,8 +9,10 @@ import duckdb
 
 
 def _quantile(values: np.ndarray | list[float], q: float) -> float:
-    """Compute a linear-interpolated quantile for numeric values.
-    Used by: train.py, window_sensitivity.py.
+    """What: Compute a linear-interpolated quantile for numeric values.
+    Why: Keeps spend-cap threshold calculation deterministic across scripts.
+
+    Used by: `train.py`, `window_sensitivity.py`.
     """
     values_arr = np.asarray(values, dtype=float)
     if values_arr.size == 0: raise ValueError("Cannot compute quantile on empty values.")
@@ -18,8 +20,10 @@ def _quantile(values: np.ndarray | list[float], q: float) -> float:
 
 
 def _split_df_rows_10_1_1(df: pd.DataFrame, date_column: str = "as_of_date") -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
-    """Split a DataFrame into strict 10/1/1 train/validation/test partitions."""
-    unique_dates = sorted(set(df[date_column].tolist()))
+    """What: Split rows into strict 10/1/1 train/validation/test by snapshot date.
+    Why: Enforces the repo's fixed out-of-time evaluation protocol.
+    """
+    unique_dates = sorted(df[date_column].unique().tolist())
     if len(unique_dates) != 12: raise ValueError("Strict split requires exactly 12 unique as_of_date snapshots " f"(got {len(unique_dates)}).")
     train_dates, validation_dates, test_dates = set(unique_dates[:10]), {unique_dates[10]}, {unique_dates[11]}
     split_desc = (
@@ -34,7 +38,9 @@ def _split_df_rows_10_1_1(df: pd.DataFrame, date_column: str = "as_of_date") -> 
 
 
 def _read_parquet_panel(paths: Path | list[Path], allow_empty: bool = False) -> pd.DataFrame:
-    """Read one or many parquet files into a single DataFrame."""
+    """What: Read one or more parquet files into one concatenated DataFrame.
+    Why: Provides a single, typed ingestion path for train/sensitivity/predict scripts.
+    """
     panel_paths = [paths] if isinstance(paths, Path) else paths
     if not panel_paths: raise ValueError("At least one parquet path is required.")
     dfs: list[pd.DataFrame] = []
@@ -60,11 +66,12 @@ def _load_snapshot_rows(
     purchase_label_column: str,
     revenue_label_column: str,
 ) -> pd.DataFrame:
-    """Load snapshot parquet rows as a typed DataFrame (pre-split).
+    """What: Load snapshot rows and coerce required feature/label schema.
+    Why: Normalizes input types before train-time split, capping, and modeling.
 
-    purchase_label_column and revenue_label_column select the horizon-specific label columns
-    (for example, 30d vs 60d vs 90d) to keep loading aligned with the run config.
-    Used by: train.py.
+    `purchase_label_column` and `revenue_label_column` select horizon-specific targets
+    (e.g., 30d/60d/90d) so loading matches the active run configuration.
+    Used by: `train.py`.
     """
     source_df = _read_parquet_panel(input_paths)
     required_columns = ["user_id", "as_of_date", "country", purchase_label_column, revenue_label_column, *feature_columns]

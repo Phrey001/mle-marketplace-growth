@@ -15,6 +15,9 @@ POLICIES = [
 
 
 def _load_rows(path: Path, purchase_label_col: str, revenue_label_col: str) -> list[dict]:
+    """What: Load scored CSV rows and validate required columns for policy replay.
+    Why: Ensures all policy metrics are computed from the same expected schema.
+    """
     # ===== Load Inputs =====
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
@@ -42,6 +45,9 @@ def _policy_metrics(
     revenue_label_col: str,
     cost_per_user: float,
 ) -> dict:
+    """What: Compute budget-constrained offline outcomes for one ranking policy.
+    Why: Produces comparable policy KPIs from the same selected top-K users.
+    """
     # ===== Rank + Score =====
     ranked_rows = sorted(rows, key=lambda row: float(row[score_col]), reverse=True)
     selected_rows = ranked_rows[:target_count]
@@ -60,6 +66,9 @@ def _policy_metrics(
 
 
 def main() -> None:
+    """What: CLI runner for offline budget policy comparison.
+    Why: Writes a single JSON artifact used by validation/reporting steps.
+    """
     # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Budget-constrained policy comparison for ML/Random/RFM.")
     parser.add_argument("--scores-csv", required=True, help="Validation/Test predictions CSV from train.py")

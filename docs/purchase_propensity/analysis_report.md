@@ -45,7 +45,7 @@ Sensitivity sweep context (to avoid misread vs Section 4):
 
 | Cycle | Best prediction window by PR-AUC | PR-AUC |
 |---|---|---:|
-| Cycle 1 (Initial) | 90d | 0.730734 |
+| Cycle 1 (Initial) | 90d | 0.731326 |
 
 Window outputs:
 - `artifacts/purchase_propensity/cycle_initial/offline_eval/window_sensitivity.json`
@@ -63,12 +63,12 @@ Primary quality metric in this section is **PR-AUC**; `ROC-AUC`, top-decile lift
 
 | Cycle | Frozen model (from Section 3) | PR-AUC | ROC-AUC | Top-decile lift | Brier | ECE |
 |---|---|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | xgboost | 0.75 | 0.71 | 1.77 | 0.22 | 0.03 |
-| Cycle 2 (Retrain) | xgboost | 0.66 | 0.77 | 2.53 | 0.20 | 0.15 |
+| Cycle 1 (Initial) | xgboost | 0.75 | 0.71 | 1.75 | 0.22 | 0.03 |
+| Cycle 2 (Retrain) | xgboost | 0.66 | 0.77 | 2.52 | 0.20 | 0.15 |
 
 Guardrail interpretation (validation slice):
 - `ROC-AUC`: rank-discrimination sanity check (higher is better). Retrain is stronger (`0.77` vs `0.71`).
-- `Top-decile lift`: concentration of positives in the top-ranked decile (higher is better). Retrain is stronger (`2.53` vs `1.77`).
+- `Top-decile lift`: concentration of positives in the top-ranked decile (higher is better). Retrain is stronger (`2.52` vs `1.75`).
 - `Brier`: probability error (lower is better). Retrain is slightly better (`0.20` vs `0.22`).
 - `ECE`: calibration gap (lower is better). Initial is better-calibrated (`0.03` vs `0.15`), so retrain has a calibration tradeoff despite stronger ranking.
 
@@ -76,8 +76,8 @@ Revenue-model validation quality (buyers only):
 
 | Cycle | RMSE | MAE | MAPE |
 |---|---:|---:|---:|
-| Cycle 1 (Initial) | 2251.5 | 704.1 | 1.2 |
-| Cycle 2 (Retrain) | 2850.3 | 797.8 | 2.7 |
+| Cycle 1 (Initial) | 2018.9 | 691.9 | 1.2 |
+| Cycle 2 (Retrain) | 2872.6 | 800.8 | 2.7 |
 
 Revenue-model interpretation (validation slice; buyers only):
 - `RMSE`/`MAE`: absolute revenue error in currency units (lower is better).
@@ -104,14 +104,14 @@ Revenue per Targeted User (Historical Realized):
 
 | Cycle | ML | Random | RFM | ML vs Random | ML vs RFM |
 |---|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 1429.7 | 505.8 | 1444.4 | +923.9 | -14.6 |
-| Cycle 2 (Retrain) | 949.5 | 307.7 | 949.3 | +641.8 | +0.2 |
+| Cycle 1 (Initial) | 1432.0 | 505.8 | 1444.4 | +926.2 | -12.3 |
+| Cycle 2 (Retrain) | 956.0 | 307.7 | 949.3 | +648.4 | +6.7 |
 
 Purchase Rate (Historical Realized):
 
 | Cycle | ML | Random | RFM | ML vs Random | ML vs RFM |
 |---|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 0.68 | 0.41 | 0.70 | +0.27 | -0.02 |
+| Cycle 1 (Initial) | 0.68 | 0.41 | 0.70 | +0.27 | -0.01 |
 | Cycle 2 (Retrain) | 0.66 | 0.35 | 0.65 | +0.31 | +0.01 |
 
 Policy comparison details are stored in:
@@ -126,8 +126,8 @@ Slice key: this section summarizes post-freeze results; model-quality columns (`
 
 | Cycle | Score Date | Model | ROC-AUC | PR-AUC | RMSE | MAE | MAPE | ML vs Random (rev/user) | ML vs RFM (rev/user) |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 2010-11-01 | xgboost | 0.71 | 0.75 | 2251.5 | 704.1 | 1.2 | 923.9 | -14.6 |
-| Cycle 2 (Retrain) | 2011-02-01 | xgboost | 0.77 | 0.66 | 2850.3 | 797.8 | 2.7 | 641.8 | 0.2 |
+| Cycle 1 (Initial) | 2010-11-01 | xgboost | 0.71 | 0.75 | 2018.9 | 691.9 | 1.2 | 926.2 | -12.3 |
+| Cycle 2 (Retrain) | 2011-02-01 | xgboost | 0.77 | 0.66 | 2872.6 | 800.8 | 2.7 | 648.4 | 6.7 |
 
 Interpretation notes:
 - Ranking discrimination (`ROC-AUC`) and concentration (`Top-decile lift`) are stronger in retrain cycle.

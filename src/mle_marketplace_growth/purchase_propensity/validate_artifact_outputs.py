@@ -1,8 +1,28 @@
-"""Validate purchase propensity artifacts with automated sanity checks."""
+"""Validate purchase propensity artifacts with automated sanity checks.
+
+High-level checks in this script:
+- Required artifact files exist.
+- Selected propensity model name is supported.
+- Candidate propensity metrics are in valid probability ranges.
+- Budget-policy outputs exist for validation and test (ML/Random/RFM).
+- ML budget policy targets at least one user with non-zero spend.
+- Optional: window sensitivity includes 30/60/90 windows when required.
+
+Artifacts written by this script:
+- `output_validation_summary.json` (pass/fail checks and details).
+- `output_interpretation.md` (human-readable summary of model and policy outcomes).
+"""
 
 import argparse
 import json
 from pathlib import Path
+
+
+def _read_json(path: Path) -> dict:
+    """What: Read a JSON file into a dictionary.
+    Why: Keeps JSON loading consistent and concise across validation helpers.
+    """
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def run_validation(
@@ -10,6 +30,9 @@ def run_validation(
     expect_window_sensitivity: bool,
     output_json: Path | None = None,
 ) -> tuple[bool, dict]:
+    """What: Run artifact-level sanity checks and optionally write a summary JSON.
+    Why: Provides a deterministic pass/fail gate for offline propensity outputs.
+    """
     # ===== Load Inputs =====
     train_metrics_path, budget_eval_test_path, budget_eval_validation_path = (
         artifacts_dir / "train_metrics.json",
@@ -17,10 +40,11 @@ def run_validation(
         artifacts_dir / "offline_policy_budget_validation.json",
     )
     for path in (train_metrics_path, budget_eval_test_path, budget_eval_validation_path):
-        if not path.exists(): raise FileNotFoundError(f"Required artifact not found: {path}")
+        if not path.exists():
+            raise FileNotFoundError(f"Required artifact not found: {path}")
     train_metrics, budget_eval_test = (
-        json.loads(train_metrics_path.read_text(encoding="utf-8")),
-        json.loads(budget_eval_test_path.read_text(encoding="utf-8")),
+        _read_json(train_metrics_path),
+        _read_json(budget_eval_test_path),
     )
 
     # ===== Run Checks =====
@@ -62,7 +86,7 @@ def run_validation(
             "detail": f"ml={ml_revenue:.6f}, random={random_revenue:.6f}",
         }
     )
-    budget_eval_validation = json.loads(budget_eval_validation_path.read_text(encoding="utf-8"))
+    budget_eval_validation = _read_json(budget_eval_validation_path)
     checks.append(
         {
             "check": "budget_policy_validation_and_test_outputs_present",
@@ -89,8 +113,9 @@ def run_validation(
     # Optional sensitivity checks.
     sensitivity_path = artifacts_dir / "window_sensitivity.json"
     if expect_window_sensitivity:
-        if not sensitivity_path.exists(): raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
-        sensitivity = json.loads(sensitivity_path.read_text(encoding="utf-8"))
+        if not sensitivity_path.exists():
+            raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
+        sensitivity = _read_json(sensitivity_path)
         windows = [int(row.get("window_days", -1)) for row in sensitivity.get("window_sensitivity", [])]
         checks.append(
             {
@@ -117,13 +142,17 @@ def write_interpretation(
     output_md: Path | None = None,
     expect_window_sensitivity: bool = False,
 ) -> Path:
+    """What: Build and write a human-readable markdown interpretation report.
+    Why: Summarizes key model/policy outcomes for quick artifact review.
+    """
     # ===== Load Inputs =====
     train_metrics, budget_eval_test, budget_eval_validation = (
-        json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8")),
-        json.loads((artifacts_dir / "offline_policy_budget_test.json").read_text(encoding="utf-8")),
-        json.loads((artifacts_dir / "offline_policy_budget_validation.json").read_text(encoding="utf-8")),
+        _read_json(artifacts_dir / "train_metrics.json"),
+        _read_json(artifacts_dir / "offline_policy_budget_test.json"),
+        _read_json(artifacts_dir / "offline_policy_budget_validation.json"),
     )
 
+    # ===== Model Metrics =====
     validation_quality = train_metrics.get("validation_quality", {})
     top_lift = float(validation_quality.get("top_decile_lift", 0.0))
     pr_auc = float(validation_quality.get("average_precision", 0.0))
@@ -131,6 +160,7 @@ def write_interpretation(
     ece = float(validation_quality.get("ece_10_bin", 0.0))
     brier = float(validation_quality.get("brier_score", 1.0))
 
+    # ===== Policy Outcomes =====
     policies = {row["policy"]: row for row in budget_eval_test.get("policy_comparison", [])}
     policies_validation = {row["policy"]: row for row in budget_eval_validation.get("policy_comparison", [])}
     ml_rev, random_rev, rfm_rev = (
@@ -143,17 +173,24 @@ def write_interpretation(
     window_summary = "Window sensitivity not run in fixed mode."
     if expect_window_sensitivity:
         sensitivity_path = artifacts_dir / "window_sensitivity.json"
-        if not sensitivity_path.exists(): raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
-        sensitivity = json.loads(sensitivity_path.read_text(encoding="utf-8"))
+        if not sensitivity_path.exists():
+            raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
+        sensitivity = _read_json(sensitivity_path)
         window_rows = sensitivity.get("window_sensitivity", [])
         if window_rows:
-            best_window = max(window_rows, key=lambda row: max(item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])))
+            best_window = max(
+                window_rows,
+                key=lambda row: max(
+                    item["average_precision"] for item in row.get("model_results", [{"average_precision": 0.0}])
+                ),
+            )
             best_window_ap = max(item["average_precision"] for item in best_window.get("model_results", []))
             window_summary = (
                 f"Best prediction window by PR-AUC: {best_window['window_days']}d "
                 f"(PR-AUC={best_window_ap:.4f})."
             )
 
+    # ===== Compose Report =====
     lines = [
         "# Automated Interpretation",
         "",
@@ -193,8 +230,11 @@ def write_interpretation(
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
 
+
 def main() -> None:
-    # Parse CLI arguments.
+    """What: CLI entrypoint for artifact validation and interpretation generation.
+    Why: Provides one command to enforce checks and emit human-readable summary.
+    """
     parser = argparse.ArgumentParser(description="Validate generated purchase propensity artifacts.")
     parser.add_argument("--artifacts-dir", default="artifacts/purchase_propensity", help="Directory containing generated artifacts")
     parser.add_argument("--output-json", default="artifacts/purchase_propensity/output_validation_summary.json", help="Where to write output-validation summary JSON")

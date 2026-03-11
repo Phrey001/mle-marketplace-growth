@@ -33,7 +33,7 @@ Current implementation note:
 - Purchase propensity offline train/eval uses strict 12-snapshot panel assembly and policy-budget evaluation.
 - That orchestration is packaged in `run_pipeline` for this engine (this is why the command may look broader than a thin train-only wrapper).
 - Inside `run_pipeline`, policy evaluation runs before final artifact validation checks.
-- `validate_outputs` is core in this flow and runs automatically inside `run_pipeline` (standalone validator invocation is only for manual debug/recovery).
+- `validate_artifact_outputs` is core in this flow and runs automatically inside `run_pipeline` (standalone validator invocation is only for manual debug/recovery).
 - When `window_selection_mode: sensitivity` (cycle 1) in config `.yaml`, `run_pipeline` runs the window sensitivity step and freezes the selected structure.
 
 ```bash
@@ -110,7 +110,7 @@ rm -rf data/gold/feature_store/purchase_propensity/*
 Unit tests:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m unittest tests/test_run_pipeline.py tests/test_validate_outputs.py tests/test_purchase_propensity_minimal.py
+PYTHONPATH=src .venv/bin/python -m unittest tests/test_run_pipeline.py tests/test_validate_artifact_outputs.py tests/test_purchase_propensity_minimal.py
 ```
 
 Integration test:
