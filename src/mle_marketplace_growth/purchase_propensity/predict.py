@@ -6,6 +6,8 @@ import pickle
 from pathlib import Path
 
 import duckdb
+import numpy as np
+import pandas as pd
 
 
 # ===== Entry Point =====
@@ -28,7 +30,8 @@ def main() -> None:
     with model_path.open("rb") as file:
         model_bundle = pickle.load(file)
 
-    vectorizer = model_bundle["vectorizer"]
+    vectorizer = model_bundle.get("vectorizer")
+    encoded_feature_columns = model_bundle.get("encoded_feature_columns")
     propensity_model = model_bundle["propensity_model"]
     revenue_model = model_bundle["revenue_model"]
     revenue_fallback_value = float(model_bundle["revenue_fallback_value"])
@@ -59,16 +62,22 @@ def main() -> None:
         features[spend_feature] = min(float(features[spend_feature]), spend_cap_value)
         feature_rows.append(features)
 
-    matrix = vectorizer.transform(feature_rows)
+    # Intermediate features for scoring (not written to output directly).
+    if encoded_feature_columns is not None:
+        feature_frame = pd.DataFrame(feature_rows)
+        encoded_frame = pd.get_dummies(feature_frame, columns=["country"], dtype=float)
+        matrix = encoded_frame.reindex(columns=encoded_feature_columns, fill_value=0.0).to_numpy(dtype=float)
+    elif vectorizer is not None:
+        matrix = vectorizer.transform(feature_rows)
+    else:
+        raise ValueError("Model bundle is missing both encoded_feature_columns and vectorizer.")
+
     propensity_scores = propensity_model.predict_proba(matrix)[:, 1]
     if revenue_model is None:
-        conditional_revenue_scores = [max(0.0, revenue_fallback_value) for _ in feature_rows]
+        conditional_revenue_scores = np.full(len(feature_rows), max(0.0, revenue_fallback_value), dtype=float)
     else:
-        conditional_revenue_scores = [max(0.0, float(value)) for value in revenue_model.predict(matrix)]
-    expected_value_scores = [
-        float(propensity) * float(conditional_revenue)
-        for propensity, conditional_revenue in zip(propensity_scores, conditional_revenue_scores, strict=True)
-    ]
+        conditional_revenue_scores = np.maximum(0.0, revenue_model.predict(matrix)).astype(float, copy=False)
+    expected_value_scores = propensity_scores * conditional_revenue_scores
 
     # ===== Write Outputs =====
     output_path.parent.mkdir(parents=True, exist_ok=True)

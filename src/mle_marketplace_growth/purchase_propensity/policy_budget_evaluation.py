@@ -5,6 +5,8 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
+
 POLICIES = [
     ("ml_top_expected_value", "expected_value_score"),
     ("random_baseline", "random_policy_score"),
@@ -13,6 +15,7 @@ POLICIES = [
 
 
 def _load_rows(path: Path, purchase_label_col: str, revenue_label_col: str) -> list[dict]:
+    # ===== Load Inputs =====
     with path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     if not rows: raise ValueError(f"No rows found in scores CSV: {path}")
@@ -39,12 +42,13 @@ def _policy_metrics(
     revenue_label_col: str,
     cost_per_user: float,
 ) -> dict:
+    # ===== Rank + Score =====
     ranked_rows = sorted(rows, key=lambda row: float(row[score_col]), reverse=True)
     selected_rows = ranked_rows[:target_count]
     if not selected_rows: raise ValueError(f"No selected rows for policy={policy_name} and target_count={target_count}")
     targeted_users = len(selected_rows)
-    revenue_total = sum(float(row[revenue_label_col]) for row in selected_rows)
-    purchase_rate = sum(float(row[purchase_label_col]) for row in selected_rows) / targeted_users
+    revenue_total = float(np.sum([float(row[revenue_label_col]) for row in selected_rows]))  # ground-truth revenue from labeled outcomes
+    purchase_rate = float(np.mean([float(row[purchase_label_col]) for row in selected_rows]))  # ground-truth purchase rate in selected users
     return {
         "policy": policy_name,
         "targeted_users": targeted_users,
@@ -56,6 +60,7 @@ def _policy_metrics(
 
 
 def main() -> None:
+    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Budget-constrained policy comparison for ML/Random/RFM.")
     parser.add_argument("--scores-csv", required=True, help="Validation/Test predictions CSV from train.py")
     parser.add_argument("--output-json", required=True, help="Output JSON path")
@@ -64,15 +69,18 @@ def main() -> None:
     parser.add_argument("--prediction-window-days", type=int, choices=[30, 60, 90], default=30, help="Label horizon used for policy backtest metrics")
     args = parser.parse_args()
 
+    # ===== Input Checks =====
     if args.budget <= 0.0: raise ValueError("--budget must be greater than 0")
     if args.cost_per_user <= 0.0: raise ValueError("--cost-per-user must be greater than 0")
 
+    # ===== Load Scores =====
     purchase_label_col = f"label_purchase_{args.prediction_window_days}d"
     revenue_label_col = f"label_net_revenue_{args.prediction_window_days}d"
     rows = _load_rows(Path(args.scores_csv), purchase_label_col, revenue_label_col)
     target_count = int(args.budget // args.cost_per_user)
     if target_count < 1: raise ValueError("Budget is too small to target any user.")
 
+    # ===== Policy Comparison =====
     policy_comparison = [
         _policy_metrics(
             rows,
@@ -112,6 +120,7 @@ def main() -> None:
         },
     }
 
+    # ===== Write Outputs =====
     output_path = Path(args.output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")

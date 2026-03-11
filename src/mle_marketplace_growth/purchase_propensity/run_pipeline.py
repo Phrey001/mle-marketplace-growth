@@ -35,16 +35,19 @@ def _run_module(module: str, *args: object) -> None:
 
 # ===== Entry Point =====
 def main() -> None:
+    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
     parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
     args = parser.parse_args()
+
+    # ===== Load Config =====
     cfg = load_yaml_defaults(args.config, "Engine config").get
 
     # Config keys expected in cycle YAML (with defaults where optional).
     # Deterministic configs: always used (paths, dates, budgets).
     # Branching configs: control whether we run sensitivity or use fixed settings.
     # - window_selection_mode toggles sensitivity vs fixed path.
-    # - force_propensity_model is required only in fixed mode.
+    # - force_propensity_model is required only in fixed mode; sensitivity mode derives it from window_sensitivity output.
     panel_end_date_raw = cfg("panel_end_date", None)
     output_root = Path(cfg("output_root", "data"))  # default path
     prediction_window_days = int(cfg("prediction_window_days", 30))  # allowed values: 30/60/90
@@ -89,14 +92,13 @@ def main() -> None:
     # ===== Structural Decision: Sensitivity Freeze or Fixed Config =====
     expect_window_sensitivity = window_selection_mode == "sensitivity"
     if expect_window_sensitivity:
-        _run_module(
-            "mle_marketplace_growth.purchase_propensity.window_sensitivity",
-            "--panel-root", output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset",
-            "--panel-end-date", panel_end_date.isoformat(),
+        sensitivity_args: list[str | Path] = [
+            *[arg for path in train_paths for arg in ("--input-path", path)],
             "--events-path", output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
             "--output-json", offline_eval_dir / "window_sensitivity.json",
             "--output-plot", offline_eval_dir / "window_validation_dashboard.png",
-        )
+        ]
+        _run_module("mle_marketplace_growth.purchase_propensity.window_sensitivity", *sensitivity_args)
         window_sensitivity_output = json.loads((offline_eval_dir / "window_sensitivity.json").read_text(encoding="utf-8"))
         freeze_decision = window_sensitivity_output["freeze_decision"]
         frozen_prediction_window_days = int(freeze_decision["selected_prediction_window_days"])

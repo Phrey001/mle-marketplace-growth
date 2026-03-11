@@ -60,6 +60,11 @@ Feature window notes:
 4. SQL: Skip 30‑day average basket size because most users have too few purchases in 30 days for a stable average. Still keep 30‑day counts and spend totals because even small activity in the last 30d is a useful signal.
 5. SQL: `label_*` features – Include depending on prediction window config.
 
+Feature matrix example (`train.py`):
+- Before vectorization: one row is a dict, e.g. `{"recency_days": 12.0, "frequency_30d": 0.0, ..., "country": "US"}`.
+- After `DictVectorizer.fit/transform`: `train_matrix` is a sparse numeric matrix with shape `(n_train_rows, n_features)`, e.g. `(50000, 8)`.
+- Categorical values (like `country`) are encoded into numeric columns by the vectorizer.
+
 ## Artifact Contract
 
 Per cycle (`artifacts/purchase_propensity/<cycle>/`):

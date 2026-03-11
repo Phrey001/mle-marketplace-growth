@@ -46,16 +46,19 @@ def _ann_retrieve_indices(
 
 
 def main() -> None:
+    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Generate recommender Top-K predictions.")
     parser.add_argument("--model-bundle", default="artifacts/recommender/model_bundle.pkl", help="Path to model bundle from train.py")
     parser.add_argument("--output-csv", default="artifacts/recommender/topk_recommendations.csv", help="Output Top-K recommendations CSV")
     parser.add_argument("--top-k", type=int, default=20, help="Top-K candidates per user")
     args = parser.parse_args()
 
+    # ===== Input Checks =====
     model_path = Path(args.model_bundle)
     if not model_path.exists(): raise FileNotFoundError(f"Model bundle not found: {model_path}")
     if args.top_k < 1: raise ValueError("--top-k must be >= 1")
 
+    # ===== Load Model Bundle =====
     with model_path.open("rb") as file:
         bundle = pickle.load(file)
 
@@ -76,6 +79,7 @@ def main() -> None:
     elif selected == "two_tower": item_matrix = tt_item
     else: raise ValueError(f"Unsupported selected model: {selected}")
 
+    # ===== Score Users =====
     output_rows: list[list[str | int | float]] = []
     item_count = len(item_ids)
     ann_index_path = model_path.parent / "ann_index.bin"
@@ -111,6 +115,7 @@ def main() -> None:
         for rank, (item_idx, item_score) in enumerate(zip(ranked_item_indices, ranked_scores, strict=True), start=1):
             output_rows.append([user_id, rank, item_ids[item_idx], round(item_score, 6), selected])
 
+    # ===== Write Outputs =====
     output_path = Path(args.output_csv)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as file:

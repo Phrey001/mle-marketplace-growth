@@ -87,6 +87,7 @@ Revenue-model interpretation (validation slice; buyers only):
 ## 5) Policy Comparison Under Budget Constraint (Test Slice)
 
 **Objective:** compare targeting policies on realized **test-slice** holdout outcomes using the same target volume under frozen structural settings from Section 3.
+Test-slice policies are evaluated after final refit of the selected ML models on `train+validation`; the test snapshot remains untouched until this holdout scoring step.
 
 **Interpretation:**
 - ML targeting clearly beats random baseline in both cycles.
@@ -96,6 +97,8 @@ Policy rules (applies to both cycles):
 - ML expected value: rank by `propensity_score × predicted_conditional_revenue`, target Top-K by budget.
 - Random baseline: deterministic random target selection, target Top-K by budget.
 - RFM heuristic: rank by recency/frequency/monetary heuristic, target Top-K by budget.
+- All three policies are compared on the same test-slice cohort and equal budgeted Top-K, so deltas are apples-to-apples within the holdout slice.
+- Refit applies to ML model scoring only; `random` and `rfm` are deterministic ranking baselines computed directly on the same holdout rows.
 
 Revenue per Targeted User (Historical Realized):
 

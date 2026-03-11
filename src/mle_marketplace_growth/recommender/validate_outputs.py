@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tuple[bool, dict]:
-    # Load required artifacts.
+    # ===== Load Inputs =====
     train_metrics_path = artifacts_dir / "train_metrics.json"
     validation_metrics_path = artifacts_dir / "validation_retrieval_metrics.json"
     test_metrics_path = artifacts_dir / "test_retrieval_metrics.json"
@@ -31,7 +31,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
     selected_model = train_metrics.get("selected_model_name")
     expected_models = {"popularity", "mf", "two_tower"}
 
-    # Core consistency checks.
+    # ===== Run Checks =====
     checks = [
         {
             "check": "selected_model_present",
@@ -91,7 +91,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
 
     passed = all(check["passed"] for check in checks)
     summary = {"passed": passed, "artifacts_dir": str(artifacts_dir), "checks": checks}
-    # Optionally persist validation summary.
+    # ===== Write Outputs =====
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -99,7 +99,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
 
 
 def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> Path:
-    # Load summary artifacts.
+    # ===== Load Inputs =====
     train_metrics = json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8"))
     validation_metrics = json.loads((artifacts_dir / "validation_retrieval_metrics.json").read_text(encoding="utf-8"))
     test_metrics = json.loads((artifacts_dir / "test_retrieval_metrics.json").read_text(encoding="utf-8"))
@@ -117,7 +117,7 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
             return "n/a"
         return f"{(observed / random_anchor):.2f}x"
 
-    # Build compact interpretation report.
+    # ===== Build Summary =====
     val_recall = {model: float(metrics.get(f"Recall@{anchor_k}", 0.0)) for model, metrics in val_by_model.items()}
     test_recall = {model: float(metrics.get(f"Recall@{anchor_k}", 0.0)) for model, metrics in test_by_model.items()}
     lines = [
@@ -152,16 +152,17 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
 
 
 def main() -> None:
-    # Parse CLI arguments.
+    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Validate recommender artifacts.")
     parser.add_argument("--artifacts-dir", default="artifacts/recommender", help="Recommender artifacts directory")
     parser.add_argument("--output-json", default="artifacts/recommender/output_validation_summary.json", help="Path for validation summary output")
     args = parser.parse_args()
 
-    # Run checks and emit interpretation.
+    # ===== Run Validation =====
     artifacts_dir = Path(args.artifacts_dir)
     passed, summary = run_validation(artifacts_dir, output_json=Path(args.output_json))
     if not passed: raise SystemExit(f"Validation failed: {[row for row in summary['checks'] if not row['passed']]}")
+    # ===== Write Interpretation =====
     interpretation_path = write_interpretation(artifacts_dir)
     print(f"Wrote interpretation: {interpretation_path}")
     print(f"Validation passed: {args.output_json}")

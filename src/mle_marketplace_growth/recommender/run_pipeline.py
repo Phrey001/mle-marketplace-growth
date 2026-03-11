@@ -17,9 +17,12 @@ def _run_module(module: str, *args: object) -> None:
 
 
 def main() -> None:
+    # ===== CLI Arguments =====
     parser = argparse.ArgumentParser(description="Run recommender pipeline end-to-end.")
     parser.add_argument("--config", required=True, help="YAML config file")
     args = parser.parse_args()
+
+    # ===== Load Config =====
     cfg = load_yaml_defaults(args.config, "Engine config").get
     output_root = Path(cfg("output_root", "data"))
     artifacts_dir = Path(cfg("artifacts_dir", "artifacts/recommender"))
@@ -43,7 +46,6 @@ def main() -> None:
     top_ks = cfg("top_ks", "10,20")
 
     # ===== Validate Inputs (Prebuilt Gold Required) =====
-    # Resolve prebuilt gold inputs.
     split_path = output_root / "gold" / "feature_store" / "recommender" / "user_item_splits" / "user_item_splits.parquet"
     user_index_path = output_root / "gold" / "feature_store" / "recommender" / "user_index" / "user_index.parquet"
     item_index_path = output_root / "gold" / "feature_store" / "recommender" / "item_index" / "item_index.parquet"
@@ -55,6 +57,7 @@ def main() -> None:
                 f"(expected path: {required_path})."
             )
 
+    # ===== Train + Select Model =====
     # Train candidate models and select by validation Recall@20.
     _run_module(
         "mle_marketplace_growth.recommender.train",
@@ -102,6 +105,7 @@ def main() -> None:
         top_ks,
     )
 
+    # ===== Predict Top-K =====
     # Generate serving-style Top-K predictions for all users.
     _run_module(
         "mle_marketplace_growth.recommender.predict",
@@ -113,6 +117,7 @@ def main() -> None:
         top_k,
     )
 
+    # ===== Validate + Interpret =====
     # Validate outputs and write interpretation summary.
     summary_path = artifacts_dir / "output_validation_summary.json"
     passed, summary = run_validation(artifacts_dir=artifacts_dir, output_json=summary_path)

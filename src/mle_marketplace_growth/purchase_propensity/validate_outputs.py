@@ -10,7 +10,7 @@ def run_validation(
     expect_window_sensitivity: bool,
     output_json: Path | None = None,
 ) -> tuple[bool, dict]:
-    # Load required artifacts.
+    # ===== Load Inputs =====
     train_metrics_path, budget_eval_test_path, budget_eval_validation_path = (
         artifacts_dir / "train_metrics.json",
         artifacts_dir / "offline_policy_budget_test.json",
@@ -23,6 +23,7 @@ def run_validation(
         json.loads(budget_eval_test_path.read_text(encoding="utf-8")),
     )
 
+    # ===== Run Checks =====
     checks: list[dict] = []
 
     # Model sanity checks.
@@ -103,7 +104,7 @@ def run_validation(
     passed = all(row["passed"] for row in checks)
     summary = {"passed": passed, "artifacts_dir": str(artifacts_dir), "checks": checks}
 
-    # Optionally persist validation summary.
+    # ===== Write Outputs =====
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -116,7 +117,7 @@ def write_interpretation(
     output_md: Path | None = None,
     expect_window_sensitivity: bool = False,
 ) -> Path:
-    # Load core artifacts.
+    # ===== Load Inputs =====
     train_metrics, budget_eval_test, budget_eval_validation = (
         json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8")),
         json.loads((artifacts_dir / "offline_policy_budget_test.json").read_text(encoding="utf-8")),
@@ -138,7 +139,7 @@ def write_interpretation(
         float(policies.get("rfm_heuristic", {}).get("actual_revenue_per_targeted_user", 0.0)),
     )
 
-    # Optionally include sensitivity summary.
+    # ===== Optional Sensitivity Summary =====
     window_summary = "Window sensitivity not run in fixed mode."
     if expect_window_sensitivity:
         sensitivity_path = artifacts_dir / "window_sensitivity.json"
@@ -186,6 +187,7 @@ def write_interpretation(
         "",
     ]
 
+    # ===== Write Outputs =====
     report_path = output_md or (artifacts_dir / "output_interpretation.md")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
