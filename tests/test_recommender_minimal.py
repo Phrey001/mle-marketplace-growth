@@ -5,6 +5,7 @@ from pathlib import Path
 
 import duckdb
 import numpy as np
+import pandas as pd
 
 from mle_marketplace_growth.recommender.helpers.data import _load_split_rows, _validate_split_chronology
 from mle_marketplace_growth.recommender.helpers.eval import _user_eval_pool
@@ -35,7 +36,7 @@ class RecommenderMinimalTests(unittest.TestCase):
             {"user_id": "u1", "item_id": "i3", "split": "test", "event_ts": "2024-01-04 00:00:00"},
         ]
         with self.assertRaisesRegex(ValueError, "Split chronology violation"):
-            _validate_split_chronology(rows)
+            _validate_split_chronology(pd.DataFrame(rows))
 
     def test_split_leakage_test_eval_pool_excludes_train_items(self) -> None:
         train_items = {"i1", "i2"}

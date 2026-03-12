@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import random
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -31,16 +29,33 @@ PyTorch quick glossary:
 """
 
 
-def _popularity_scores(train: dict[str, set[str]], item_to_idx: dict[str, int], transform: str = "linear") -> np.ndarray:
-    """What: Compute normalized item popularity scores from train interactions.
+def _interaction_pairs(
+    interactions: dict[str, set[str]],
+    user_to_idx: dict[str, int],
+    item_to_idx: dict[str, int],
+) -> np.ndarray:
+    """What: Convert user->items interactions into [N, 2] (user_idx, item_idx) pairs.
+    Why: Gives baseline/model trainers one simple numeric input type.
+    """
+    pairs = [
+        (user_to_idx[user_id], item_to_idx[item_id])
+        for user_id, items in interactions.items()
+        for item_id in items
+        if user_id in user_to_idx and item_id in item_to_idx
+    ]
+    if not pairs:
+        return np.empty((0, 2), dtype=np.int64)
+    return np.asarray(pairs, dtype=np.int64)
+
+
+def _popularity_scores(user_item_pairs: np.ndarray, item_count: int, transform: str = "linear") -> np.ndarray:
+    """What: Compute normalized item popularity scores from (user_idx, item_idx) pairs.
     Why: Provides a strong baseline and fallback scoring signal.
     """
     # ===== Build Raw Counts =====
     # Count item frequency from train interactions.
-    scores = np.zeros(len(item_to_idx), dtype=float)
-    for items in train.values():
-        for item_id in items:
-            scores[item_to_idx[item_id]] += 1.0
+    item_indices = user_item_pairs[:, 1] if user_item_pairs.size > 0 else np.asarray([], dtype=np.int64)
+    scores = np.bincount(item_indices, minlength=item_count).astype(float)
     # ===== Apply Configured Count Transform =====
     if transform == "log1p":
         scores = np.log1p(scores)
@@ -53,9 +68,9 @@ def _popularity_scores(train: dict[str, set[str]], item_to_idx: dict[str, int], 
 
 
 def _train_mf(
-    train: dict[str, set[str]],
-    user_to_idx: dict[str, int],
-    item_to_idx: dict[str, int],
+    user_item_pairs: np.ndarray,
+    user_count: int,
+    item_count: int,
     n_components: int,
     n_iter: int = 15,
     weighting: str = "tfidf",
@@ -66,11 +81,10 @@ def _train_mf(
     Why: Provides a fast latent-factor baseline for retrieval comparison.
     """
     # ===== Build User-Item Matrix =====
-    matrix = np.zeros((len(user_to_idx), len(item_to_idx)), dtype=float)
-    for user_id, items in train.items():
-        user_idx = user_to_idx[user_id]
-        for item_id in items:
-            matrix[user_idx, item_to_idx[item_id]] = 1.0
+    matrix = np.zeros((user_count, item_count), dtype=float)
+    if user_item_pairs.size > 0:
+        user_indices, item_indices = user_item_pairs.T
+        matrix[user_indices, item_indices] = 1.0
     # ===== Apply Configured Weighting =====
     if weighting == "tfidf":
         item_df = matrix.sum(axis=0)
@@ -123,18 +137,6 @@ def _train_two_tower(
     - Output is two matrices: one user embedding matrix and one item embedding matrix.
     - Training goal is ranking quality (retrieval), not direct rating prediction.
     """
-    def _build_positive_pairs() -> list[tuple[int, int]]:
-        """What: Convert train interactions into index-based positive pairs.
-        Why: Two-tower training consumes integer user/item pairs for batching.
-        """
-        positive_pairs: list[tuple[int, int]] = []
-        for user_id, items in train.items():
-            user_idx = user_to_idx[user_id]
-            for item_id in items:
-                if item_id in item_to_idx:
-                    positive_pairs.append((user_idx, item_to_idx[item_id]))
-        return positive_pairs
-
     def _init_two_tower_components() -> tuple[nn.Module, nn.Module, nn.Module, nn.Module, torch.optim.Optimizer, nn.Module]:
         """What: Initialize embeddings, towers, optimizer, and loss module.
         Why: Keeps setup logic separate from training-loop logic for readability.
@@ -177,7 +179,6 @@ def _train_two_tower(
         return user_embedding_table, item_embedding_table, user_tower_net, item_tower_net, optimizer_obj, loss_module
 
     # ===== Step 1: Reproducibility =====
-    rng = random.Random(42)
     np_rng = np.random.default_rng(42)
     torch.manual_seed(42)
 
@@ -193,8 +194,8 @@ def _train_two_tower(
 
     # ===== Step 3: Build Positive Training Pairs =====
     # Each pair is (user_idx, purchased_item_idx).
-    positives = _build_positive_pairs()
-    if not positives:
+    positive_array = _interaction_pairs(train, user_to_idx, item_to_idx)
+    if positive_array.size == 0:
         raise ValueError("No positive interactions available for two-tower training.")
 
     # ===== Step 4: Initialize Trainable Components =====
@@ -273,8 +274,7 @@ def _train_two_tower(
     for epoch in range(1, epochs + 1):
         user_tower.train()
         item_tower.train()
-        rng.shuffle(positives)
-        positive_array = np.asarray(positives, dtype=np.int64)
+        np_rng.shuffle(positive_array)
         epoch_loss_sum = 0.0
         epoch_steps = 0
         for start in range(0, len(positive_array), max(1, batch_size)):

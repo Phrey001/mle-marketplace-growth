@@ -104,6 +104,54 @@ def _ann_retrieve_indices(
     return ranked
 
 
+def _score_user_topk(
+    *,
+    selected_model_name: str,
+    user_index: int,
+    top_k: int,
+    item_count: int,
+    seen_indices: set[int],
+    popularity_scores: np.ndarray,
+    mf_user_embeddings: np.ndarray,
+    two_tower_user_embeddings: np.ndarray,
+    item_matrix: np.ndarray,
+    ann_index: faiss.Index | None,
+) -> tuple[list[int], list[float]]:
+    """What: Score and rank Top-K item indices for one user.
+    Why: Keeps run_predict loop focused on I/O while this helper handles model-specific scoring.
+    """
+    if selected_model_name == "popularity":
+        candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
+        if not candidate_indices:
+            return [], []
+        candidate_scores = popularity_scores[candidate_indices]
+        top_local = _top_k_indices(np.asarray(candidate_scores), min(top_k, len(candidate_indices)))
+        ranked_item_indices = [candidate_indices[idx] for idx in top_local]
+        ranked_scores = [float(candidate_scores[idx]) for idx in top_local]
+        return ranked_item_indices, ranked_scores
+
+    if len(seen_indices) >= item_count:
+        return [], []
+    if ann_index is None:
+        raise ValueError("ANN index is required for non-popularity models.")
+    if selected_model_name == "mf":
+        user_vector = mf_user_embeddings[user_index].reshape(1, -1)
+    elif selected_model_name == "two_tower":
+        user_vector = two_tower_user_embeddings[user_index].reshape(1, -1)
+    else:
+        raise ValueError(f"ANN retrieval is not supported for model: {selected_model_name}")
+
+    ranked_item_indices = _ann_retrieve_indices(
+        ann_index=ann_index,
+        user_vector=user_vector,
+        args_top_k=top_k,
+        seen_indices=seen_indices,
+        item_count=item_count,
+    )
+    ranked_scores = [float(item_matrix[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
+    return ranked_item_indices, ranked_scores
+
+
 def run_predict(config_path: str) -> None:
     """What: Score users to produce Top-K recommender output CSV.
     Why: Reuses trained model bundle to generate serving-style retrieval artifacts.
@@ -116,8 +164,10 @@ def run_predict(config_path: str) -> None:
     top_k = runtime.top_k
 
     # ===== Validate Inputs =====
-    if not model_path.exists(): raise FileNotFoundError(f"Model bundle not found: {model_path}")
-    if top_k < 1: raise ValueError("top_k must be >= 1")
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model bundle not found: {model_path}")
+    if top_k < 1:
+        raise ValueError("top_k must be >= 1")
 
     # ===== Load Inputs =====
     with model_path.open("rb") as file:
@@ -152,31 +202,25 @@ def run_predict(config_path: str) -> None:
     item_count = len(item_ids)
     ann_index = _load_ann_index(ann_index_path, ann_meta_path) if selected in {"mf", "two_tower"} else None
     for user_id in user_ids:
-        if user_id not in user_to_idx: continue
+        if user_id not in user_to_idx:
+            continue
         user_idx = user_to_idx[user_id]
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
-
-        if selected == "popularity":
-            candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
-            if not candidate_indices: continue
-            scores = popularity[candidate_indices]
-            top_local = _top_k_indices(np.asarray(scores), min(top_k, len(candidate_indices)))
-            ranked_item_indices = [candidate_indices[idx] for idx in top_local]
-            ranked_scores = [float(scores[idx]) for idx in top_local]
-        else:
-            if len(seen_indices) >= item_count: continue
-            if selected == "mf": user_vector = mf_user[user_idx].reshape(1, -1)
-            elif selected == "two_tower": user_vector = tt_user[user_idx].reshape(1, -1)
-            else: raise ValueError(f"ANN retrieval is not supported for model: {selected}")
-            ranked_item_indices = _ann_retrieve_indices(
-                ann_index=ann_index,
-                user_vector=user_vector,
-                args_top_k=top_k,
-                seen_indices=seen_indices,
-                item_count=item_count,
-            )
-            ranked_scores = [float(item_matrix[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
+        ranked_item_indices, ranked_scores = _score_user_topk(
+            selected_model_name=selected,
+            user_index=user_idx,
+            top_k=top_k,
+            item_count=item_count,
+            seen_indices=seen_indices,
+            popularity_scores=popularity,
+            mf_user_embeddings=mf_user,
+            two_tower_user_embeddings=tt_user,
+            item_matrix=item_matrix,
+            ann_index=ann_index,
+        )
+        if not ranked_item_indices:
+            continue
 
         for rank, (item_idx, item_score) in enumerate(zip(ranked_item_indices, ranked_scores, strict=True), start=1):
             output_rows.append([user_id, rank, item_ids[item_idx], round(item_score, 6), selected])
