@@ -1,13 +1,14 @@
 """Build the shared silver layer from raw source data."""
 
 import argparse
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
 
-from .build_helpers import copy_table_to_parquet, load_sql_assets, load_yaml_defaults
+from mle_marketplace_growth.helpers import load_yaml_defaults, write_json
+
+from .build_helpers import copy_table_to_parquet, load_sql_assets
 
 BAD_TS_THRESHOLD = 0.01
 
@@ -65,14 +66,14 @@ def main() -> None:
     parser.add_argument("--shared-config", required=True, help="Shared YAML config file")
     args = parser.parse_args()
 
-    cfg = load_yaml_defaults(args.shared_config, "Shared config").get
-    args.input_csv = cfg("input_csv", "data/bronze/online_retail_ii/raw.csv")
-    args.output_root = cfg("output_root", "data")
+    cfg = load_yaml_defaults(args.shared_config, "Shared config")
+    input_csv_value = str(cfg.get("input_csv", "data/bronze/online_retail_ii/raw.csv"))
+    output_root_value = str(cfg.get("output_root", "data"))
 
-    input_csv = Path(args.input_csv)
+    input_csv = Path(input_csv_value)
     if not input_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
-    output_root = Path(args.output_root)
+    output_root = Path(output_root_value)
     silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet"
     shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
     manifest_path = output_root / "silver" / "_meta" / "run_manifest.json"
@@ -100,7 +101,7 @@ def main() -> None:
             "shared_db": {"path": str(shared_db_path)},
         },
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_json(manifest_path, manifest)
     print(f"Wrote run manifest: {manifest_path}")
 
 

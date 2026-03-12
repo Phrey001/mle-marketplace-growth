@@ -159,6 +159,8 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                         f"output_root: \"{output_root}\"",
                         f"artifacts_dir: \"{artifacts_root}\"",
                         "panel_end_date: \"2011-11-10\"",
+                        "window_selection_mode: sensitivity",
+                        "force_propensity_model: null",
                         "prediction_window_days: 30",
                         "feature_lookback_days: 90",
                         "budget: 500",

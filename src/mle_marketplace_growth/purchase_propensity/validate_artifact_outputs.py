@@ -14,15 +14,9 @@ Artifacts written by this script:
 """
 
 import argparse
-import json
 from pathlib import Path
 
-
-def _read_json(path: Path) -> dict:
-    """What: Read a JSON file into a dictionary.
-    Why: Keeps JSON loading consistent and concise across validation helpers.
-    """
-    return json.loads(path.read_text(encoding="utf-8"))
+from mle_marketplace_growth.helpers import read_json, write_json
 
 
 def run_validation(
@@ -43,8 +37,8 @@ def run_validation(
         if not path.exists():
             raise FileNotFoundError(f"Required artifact not found: {path}")
     train_metrics, budget_eval_test = (
-        _read_json(train_metrics_path),
-        _read_json(budget_eval_test_path),
+        read_json(train_metrics_path),
+        read_json(budget_eval_test_path),
     )
 
     # ===== Run Checks =====
@@ -86,7 +80,7 @@ def run_validation(
             "detail": f"ml={ml_revenue:.6f}, random={random_revenue:.6f}",
         }
     )
-    budget_eval_validation = _read_json(budget_eval_validation_path)
+    budget_eval_validation = read_json(budget_eval_validation_path)
     checks.append(
         {
             "check": "budget_policy_validation_and_test_outputs_present",
@@ -115,7 +109,7 @@ def run_validation(
     if expect_window_sensitivity:
         if not sensitivity_path.exists():
             raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
-        sensitivity = _read_json(sensitivity_path)
+        sensitivity = read_json(sensitivity_path)
         windows = [int(row.get("window_days", -1)) for row in sensitivity.get("window_sensitivity", [])]
         checks.append(
             {
@@ -131,8 +125,7 @@ def run_validation(
 
     # ===== Write Outputs =====
     if output_json is not None:
-        output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        write_json(output_json, summary)
 
     return passed, summary
 
@@ -147,9 +140,9 @@ def write_interpretation(
     """
     # ===== Load Inputs =====
     train_metrics, budget_eval_test, budget_eval_validation = (
-        _read_json(artifacts_dir / "train_metrics.json"),
-        _read_json(artifacts_dir / "offline_policy_budget_test.json"),
-        _read_json(artifacts_dir / "offline_policy_budget_validation.json"),
+        read_json(artifacts_dir / "train_metrics.json"),
+        read_json(artifacts_dir / "offline_policy_budget_test.json"),
+        read_json(artifacts_dir / "offline_policy_budget_validation.json"),
     )
 
     # ===== Model Metrics =====
@@ -175,7 +168,7 @@ def write_interpretation(
         sensitivity_path = artifacts_dir / "window_sensitivity.json"
         if not sensitivity_path.exists():
             raise FileNotFoundError(f"Required artifact not found: {sensitivity_path}")
-        sensitivity = _read_json(sensitivity_path)
+        sensitivity = read_json(sensitivity_path)
         window_rows = sensitivity.get("window_sensitivity", [])
         if window_rows:
             best_window = max(

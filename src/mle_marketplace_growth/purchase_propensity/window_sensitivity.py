@@ -1,32 +1,39 @@
 """Run 30/60/90-day label-window sensitivity for propensity modeling."""
 
 import argparse
-import json
-import subprocess
-import sys
+import traceback
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from mle_marketplace_growth.purchase_propensity.constants import ALLOWED_PREDICTION_WINDOWS, SPEND_CAP_QUANTILE
+from mle_marketplace_growth.helpers import cfg_required, generate_snapshot_dates, load_yaml_defaults, read_json
+from mle_marketplace_growth.purchase_propensity.constants import (
+    ALLOWED_PREDICTION_WINDOWS,
+    DEFAULT_LOOKBACK_FOR_WINDOW_SWEEP,
+    SENSITIVITY_LOOKBACK_WINDOWS,
+    SENSITIVITY_MODEL_NAMES,
+    SENSITIVITY_PREDICTION_WINDOWS,
+    SPEND_CAP_QUANTILE,
+)
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
     _write_window_sensitivity_artifact,
     _write_window_validation_dashboard,
 )
 from mle_marketplace_growth.purchase_propensity.helpers.data import _read_parquet_panel
+from mle_marketplace_growth.purchase_propensity.train import run_training
 
-FIXED_WINDOWS = sorted(ALLOWED_PREDICTION_WINDOWS)
-SENSITIVITY_MODELS = ["logistic_regression", "xgboost"]
-DEFAULT_LOOKBACK_FOR_WINDOW_SWEEP = 90
-LOOKBACK_SWEEP = [60, 90, 120]
+FIXED_WINDOWS = list(SENSITIVITY_PREDICTION_WINDOWS)
+SENSITIVITY_MODELS = list(SENSITIVITY_MODEL_NAMES)
+LOOKBACK_SWEEP = list(SENSITIVITY_LOOKBACK_WINDOWS)
 
 
 def _load_train_metrics(metrics_path: Path) -> dict:
     """What: Load one `train_metrics.json` artifact from a train.py run.
     Why: Reuses train.py outputs as the source of truth for sweep comparison.
     """
-    return json.loads(metrics_path.read_text(encoding="utf-8"))
+    return read_json(metrics_path)
 
 
 def _build_model_result_row(metrics: dict, model_name: str) -> dict:
@@ -73,18 +80,19 @@ def _failed_model_result_row(model_name: str, error_message: str) -> dict:
     }
 
 
-def _compact_subprocess_error(error: subprocess.CalledProcessError) -> str:
-    """What: Build a short, artifact-friendly error string from a failed subprocess run.
-    Why: Keeps console logs readable while preserving failure context in JSON output.
+def _compact_error(error: Exception) -> str:
+    """What: Build a short, artifact-friendly error string from a failed in-process run.
+    Why: Keeps sensitivity JSON readable while preserving root failure context.
     """
-    stderr_text = (error.stderr or "").strip()
-    last_line = stderr_text.splitlines()[-1] if stderr_text else ""
-    if last_line:
-        return f"returncode={error.returncode}; {last_line}"
-    return f"returncode={error.returncode}; command failed"
+    message = str(error).strip()
+    if message:
+        return f"{type(error).__name__}: {message}"
+    tail = traceback.format_exc().strip().splitlines()
+    return tail[-1] if tail else f"{type(error).__name__}: unknown error"
 
 
 def _run_train_eval(
+    config_path: Path,
     input_paths: list[Path],
     prediction_window_days: int,
     feature_lookback_days: int,
@@ -97,19 +105,17 @@ def _run_train_eval(
     for model_name in SENSITIVITY_MODELS:
         model_output_dir = output_dir / model_name
         model_output_dir.mkdir(parents=True, exist_ok=True)
-        command: list[str] = [
-            sys.executable, "-m",
-            "mle_marketplace_growth.purchase_propensity.train", *[arg for path in input_paths for arg in ("--input-path", str(path))],
-            "--output-dir", str(model_output_dir),
-            "--prediction-window-days", str(prediction_window_days),
-            "--feature-lookback-days", str(feature_lookback_days),
-            "--force-propensity-model", model_name,
-        ]
-        print("Running:", " ".join(command))
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as error:
-            model_results.append(_failed_model_result_row(model_name, _compact_subprocess_error(error)))
+            run_training(
+                config_path=config_path,
+                input_paths=input_paths,
+                output_dir=model_output_dir,
+                prediction_window_days=prediction_window_days,
+                feature_lookback_days=feature_lookback_days,
+                force_propensity_model=model_name,
+            )
+        except Exception as error:
+            model_results.append(_failed_model_result_row(model_name, _compact_error(error)))
             continue
 
         metrics_path = model_output_dir / "train_metrics.json"
@@ -164,19 +170,7 @@ def _inter_purchase_gap_days(events_path: Path) -> list[int]:
     return gap_days.loc[gap_days > 0].astype(int).tolist()
 
 
-def _resolve_inputs(args: argparse.Namespace) -> tuple[list[Path], Path]:
-    """What: Resolve CLI paths and validate required input files exist.
-    Why: Fails fast before launching train.py subprocess runs.
-    """
-    feature_paths = [Path(path) for path in args.input_path]
-    events_path = Path(args.events_path)
-    missing_features = [path for path in feature_paths if not path.exists()]
-    if missing_features: raise FileNotFoundError(f"Input path not found: {missing_features[0]}")
-    if not events_path.exists(): raise FileNotFoundError(f"Events path not found: {events_path}")
-    return feature_paths, events_path
-
-
-def _run_sensitivity_sweep(feature_paths: list[Path], sweep_root: Path) -> tuple[list[dict], list[dict]]:
+def _run_sensitivity_sweep(config_path: Path, feature_paths: list[Path], sweep_root: Path) -> tuple[list[dict], list[dict]]:
     """What: Run prediction-window and feature-lookback sensitivity sweeps.
     Why: Produces comparable validation outputs for freeze-decision selection.
     """
@@ -186,6 +180,7 @@ def _run_sensitivity_sweep(feature_paths: list[Path], sweep_root: Path) -> tuple
         key = (prediction_window_days, feature_lookback_days)
         if key not in eval_cache:
             eval_cache[key] = _run_train_eval(
+                config_path=config_path,
                 input_paths=feature_paths,
                 prediction_window_days=prediction_window_days,
                 feature_lookback_days=feature_lookback_days,
@@ -283,32 +278,23 @@ def _build_output(
     }
 
 
-# ===== Entry Point =====
-def main() -> None:
-    """What: Orchestrate window sensitivity runs and write JSON/plot artifacts.
-    Why: Automates model/window freeze decision under a fixed evaluation recipe.
+def run_window_sensitivity(
+    config_path: Path,
+    feature_paths: list[Path],
+    events_path: Path,
+    output_json_path: Path,
+    output_plot_path: Path,
+) -> dict:
+    """What: Run full window-sensitivity workflow and write JSON/plot artifacts.
+    Why: Reusable in-process API for run_pipeline and CLI.
     """
-    parser = argparse.ArgumentParser(description="Run 30/60/90-day sensitivity for propensity models.")
-    parser.add_argument("--input-path", action="append", required=True, help="Path to strict training-panel parquet (repeat --input-path for multi-snapshot panel)")
-    parser.add_argument("--events-path", default="data/silver/transactions_line_items/transactions_line_items.parquet", help="Path to silver transactions parquet (for recalculating labels by window)")
-    parser.add_argument("--output-json", default="artifacts/purchase_propensity/window_sensitivity.json", help="Path to sensitivity summary JSON")
-    parser.add_argument("--output-plot", default="artifacts/purchase_propensity/window_validation_dashboard.png", help="Path to window validation dashboard PNG")
-    args = parser.parse_args()
-
-    # This script orchestrates train.py runs; it does not train models directly.
-    feature_paths, events_path = _resolve_inputs(args)
-
     windows = FIXED_WINDOWS
     if set(windows) != ALLOWED_PREDICTION_WINDOWS:
         raise ValueError("--windows must be exactly 30,60,90 for strict architecture alignment.")
 
-    # ===== Diagnostics source =====
     inter_purchase_gap_days = _inter_purchase_gap_days(events_path)
-
-    # ===== Run Train-Eval Sweeps =====
-    output_json_path = Path(args.output_json)
     sweep_root = output_json_path.parent / "_window_sensitivity_train_runs"
-    sensitivity_rows, feature_window_validation = _run_sensitivity_sweep(feature_paths, sweep_root)
+    sensitivity_rows, feature_window_validation = _run_sensitivity_sweep(config_path, feature_paths, sweep_root)
     output = _build_output(
         feature_paths=feature_paths,
         events_path=events_path,
@@ -318,7 +304,40 @@ def main() -> None:
     )
     _write_window_sensitivity_artifact(output_json_path, output)
     print(f"Wrote sensitivity summary: {output_json_path}")
-    _write_window_validation_dashboard(output, Path(args.output_plot))
+    _write_window_validation_dashboard(output, output_plot_path)
+    return output
+
+
+# ===== Entry Point =====
+def main() -> None:
+    """What: Orchestrate window sensitivity runs and write JSON/plot artifacts.
+    Why: Automates model/window freeze decision under a fixed evaluation recipe.
+    """
+    parser = argparse.ArgumentParser(description="Run 30/60/90-day sensitivity for propensity models.")
+    parser.add_argument("--config", required=True, help="Purchase propensity YAML config")
+    args = parser.parse_args()
+
+    cfg = load_yaml_defaults(args.config, "Engine config")
+    output_root = Path(str(cfg_required(cfg, "output_root")))
+    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
+    feature_paths = [
+        output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset" / f"as_of_date={snapshot.isoformat()}" / "propensity_train_dataset.parquet"
+        for snapshot in generate_snapshot_dates(panel_end_date)
+    ]
+    events_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet"
+    missing_features = [path for path in feature_paths if not path.exists()]
+    if missing_features:
+        raise FileNotFoundError(f"Input path not found: {missing_features[0]}")
+    if not events_path.exists():
+        raise FileNotFoundError(f"Events path not found: {events_path}")
+    run_window_sensitivity(
+        config_path=Path(args.config),
+        feature_paths=feature_paths,
+        events_path=events_path,
+        output_json_path=artifacts_dir / "offline_eval" / "window_sensitivity.json",
+        output_plot_path=artifacts_dir / "offline_eval" / "window_validation_dashboard.png",
+    )
 
 
 if __name__ == "__main__":

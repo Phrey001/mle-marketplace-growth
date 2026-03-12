@@ -1,38 +1,97 @@
-"""Generate user-level Top-K recommendations from trained retrieval model."""
+"""Generate user-level Top-K recommendations from trained retrieval model.
+
+Workflow Steps:
+1) Load runtime config and model bundle artifacts.
+2) Select item-side scoring matrix for the chosen model family.
+3) Build serving artifacts (item embeddings + ANN index metadata).
+4) Score each user and exclude train-seen items.
+5) Write ranked Top-K recommendations to CSV.
+"""
 
 from __future__ import annotations
 
 import argparse
 import csv
-import json
 import pickle
 from pathlib import Path
 
 import faiss
 import numpy as np
 
+from mle_marketplace_growth.helpers import read_json, write_json
+from mle_marketplace_growth.recommender.constants import ANN_BACKEND
+from mle_marketplace_growth.recommender.helpers.artifacts import _write_ann_index
+from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
+from mle_marketplace_growth.recommender.helpers.eval import _top_k_indices
 
-def _top_k_indices(scores: np.ndarray, k: int) -> list[int]:
-    if k >= len(scores): return list(np.argsort(-scores))
-    partition = np.argpartition(-scores, k)[:k]
-    return list(partition[np.argsort(-scores[partition])])
+
+def _select_item_matrix(
+    selected_model_name: str,
+    popularity_scores: np.ndarray,
+    mf_item_embeddings: np.ndarray,
+    two_tower_item_embeddings: np.ndarray,
+) -> np.ndarray:
+    """What: Select item-side scoring matrix based on chosen model family.
+    Why: Unifies popularity/MF/two-tower serving flow under one retrieval path.
+    """
+    if selected_model_name == "popularity":
+        return popularity_scores.reshape(-1, 1)
+    if selected_model_name == "mf":
+        return mf_item_embeddings
+    if selected_model_name == "two_tower":
+        return two_tower_item_embeddings
+    raise ValueError(f"Unsupported selected model: {selected_model_name}")
+
+
+def _prepare_serving_artifacts(
+    artifacts_dir: Path,
+    selected_model_name: str,
+    item_matrix: np.ndarray,
+    item_to_idx: dict[str, int],
+) -> tuple[Path, Path]:
+    """What: Materialize serving artifacts (embeddings/index metadata/ANN metadata).
+    Why: Predict stage owns serving outputs, separate from model training outputs.
+    """
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    np.save(artifacts_dir / "item_embeddings.npy", item_matrix)
+    write_json(
+        artifacts_dir / "item_embedding_index.json",
+        {
+            "selected_model_name": selected_model_name,
+            "item_to_row_index": item_to_idx,
+            "embedding_shape": list(item_matrix.shape),
+        },
+    )
+    ann_metadata = _write_ann_index(artifacts_dir, item_matrix)
+    ann_meta_path = artifacts_dir / "ann_index_meta.json"
+    write_json(ann_meta_path, ann_metadata)
+    return artifacts_dir / "ann_index.bin", ann_meta_path
+
+
+def _load_ann_index(ann_index_path: Path, ann_meta_path: Path) -> faiss.Index:
+    """What: Load FAISS index and validate ANN metadata contract.
+    Why: Prevents scoring with mismatched or missing ANN artifacts.
+    """
+    if not ann_index_path.exists() or not ann_meta_path.exists():
+        raise FileNotFoundError("ANN artifacts are required: missing ann_index.bin or ann_index_meta.json.")
+    metadata = read_json(ann_meta_path)
+    if metadata.get("backend") != ANN_BACKEND:
+        raise ValueError(f"Unsupported ANN backend: {metadata.get('backend')}")
+    return faiss.read_index(str(ann_index_path))
 
 
 def _ann_retrieve_indices(
-    ann_index_path: Path,
-    ann_meta_path: Path,
+    ann_index: faiss.Index,
     user_vector: np.ndarray,
     args_top_k: int,
     seen_indices: set[int],
     item_count: int,
 ) -> list[int]:
-    if not ann_index_path.exists() or not ann_meta_path.exists(): raise FileNotFoundError("ANN artifacts are required: missing ann_index.bin or ann_index_meta.json.")
-    metadata = json.loads(ann_meta_path.read_text(encoding="utf-8"))
-    if metadata.get("backend") != "faiss_hnsw_ip": raise ValueError(f"Unsupported ANN backend: {metadata.get('backend')}")
-
-    index = faiss.read_index(str(ann_index_path))
+    """What: Retrieve top candidate item indices from ANN and remove seen items.
+    Why: Produces serving-style Top-K recommendations for each user.
+    """
     oversample = min(item_count, max(args_top_k + len(seen_indices) + 20, args_top_k * 3))
-    _, indices = index.search(user_vector.astype(np.float32), oversample)
+    _, indices = ann_index.search(user_vector.astype(np.float32), oversample)
     ranked = []
     for item_idx in indices[0].tolist():
         if item_idx < 0:
@@ -45,20 +104,22 @@ def _ann_retrieve_indices(
     return ranked
 
 
-def main() -> None:
-    # ===== CLI Arguments =====
-    parser = argparse.ArgumentParser(description="Generate recommender Top-K predictions.")
-    parser.add_argument("--model-bundle", default="artifacts/recommender/model_bundle.pkl", help="Path to model bundle from train.py")
-    parser.add_argument("--output-csv", default="artifacts/recommender/topk_recommendations.csv", help="Output Top-K recommendations CSV")
-    parser.add_argument("--top-k", type=int, default=20, help="Top-K candidates per user")
-    args = parser.parse_args()
+def run_predict(config_path: str) -> None:
+    """What: Score users to produce Top-K recommender output CSV.
+    Why: Reuses trained model bundle to generate serving-style retrieval artifacts.
+    """
+    # ===== Load Config =====
+    runtime = load_recommender_runtime_config(config_path)
+    paths = artifact_paths(runtime)
+    model_path = paths.model_bundle
+    output_path = paths.topk_recommendations
+    top_k = runtime.top_k
 
-    # ===== Input Checks =====
-    model_path = Path(args.model_bundle)
+    # ===== Validate Inputs =====
     if not model_path.exists(): raise FileNotFoundError(f"Model bundle not found: {model_path}")
-    if args.top_k < 1: raise ValueError("--top-k must be >= 1")
+    if top_k < 1: raise ValueError("top_k must be >= 1")
 
-    # ===== Load Model Bundle =====
+    # ===== Load Inputs =====
     with model_path.open("rb") as file:
         bundle = pickle.load(file)
 
@@ -74,16 +135,22 @@ def main() -> None:
     mf_item = np.asarray(bundle["mf_item_embeddings"])
     tt_user = np.asarray(bundle["two_tower_user_embeddings"])
     tt_item = np.asarray(bundle["two_tower_item_embeddings"])
-    if selected == "popularity": item_matrix = popularity.reshape(-1, 1)
-    elif selected == "mf": item_matrix = mf_item
-    elif selected == "two_tower": item_matrix = tt_item
-    else: raise ValueError(f"Unsupported selected model: {selected}")
+    item_matrix = _select_item_matrix(selected, popularity, mf_item, tt_item)
+
+    # ===== Build Serving Artifacts =====
+    # Serving artifacts are intentionally produced in predict.py (not train.py)
+    # to keep training and serving responsibilities separate.
+    ann_index_path, ann_meta_path = _prepare_serving_artifacts(
+        artifacts_dir=runtime.artifacts_dir,
+        selected_model_name=selected,
+        item_matrix=item_matrix,
+        item_to_idx=item_to_idx,
+    )
 
     # ===== Score Users =====
     output_rows: list[list[str | int | float]] = []
     item_count = len(item_ids)
-    ann_index_path = model_path.parent / "ann_index.bin"
-    ann_meta_path = model_path.parent / "ann_index_meta.json"
+    ann_index = _load_ann_index(ann_index_path, ann_meta_path) if selected in {"mf", "two_tower"} else None
     for user_id in user_ids:
         if user_id not in user_to_idx: continue
         user_idx = user_to_idx[user_id]
@@ -94,7 +161,7 @@ def main() -> None:
             candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
             if not candidate_indices: continue
             scores = popularity[candidate_indices]
-            top_local = _top_k_indices(np.asarray(scores), min(args.top_k, len(candidate_indices)))
+            top_local = _top_k_indices(np.asarray(scores), min(top_k, len(candidate_indices)))
             ranked_item_indices = [candidate_indices[idx] for idx in top_local]
             ranked_scores = [float(scores[idx]) for idx in top_local]
         else:
@@ -103,10 +170,9 @@ def main() -> None:
             elif selected == "two_tower": user_vector = tt_user[user_idx].reshape(1, -1)
             else: raise ValueError(f"ANN retrieval is not supported for model: {selected}")
             ranked_item_indices = _ann_retrieve_indices(
-                ann_index_path=ann_index_path,
-                ann_meta_path=ann_meta_path,
+                ann_index=ann_index,
                 user_vector=user_vector,
-                args_top_k=args.top_k,
+                args_top_k=top_k,
                 seen_indices=seen_indices,
                 item_count=item_count,
             )
@@ -116,7 +182,6 @@ def main() -> None:
             output_rows.append([user_id, rank, item_ids[item_idx], round(item_score, 6), selected])
 
     # ===== Write Outputs =====
-    output_path = Path(args.output_csv)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
@@ -124,6 +189,17 @@ def main() -> None:
         writer.writerows(output_rows)
 
     print(f"Wrote recommender top-k predictions: {output_path}")
+
+
+def main() -> None:
+    """What: CLI entrypoint for recommender prediction/serving artifact generation.
+    Why: Runs scoring with a single config argument for deterministic execution.
+    """
+    # ===== CLI Args =====
+    parser = argparse.ArgumentParser(description="Generate recommender Top-K predictions.")
+    parser.add_argument("--config", required=True, help="Recommender YAML config")
+    args = parser.parse_args()
+    run_predict(config_path=args.config)
 
 
 if __name__ == "__main__":

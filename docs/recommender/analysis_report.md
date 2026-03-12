@@ -2,7 +2,7 @@
 
 ## Report Metadata
 
-- **Artifact source:** `artifacts/recommender/`
+- **Artifact source:** `artifacts/recommender/as_of=<recommender_max_event_date>/`
 - **Run scope:** single-cycle recommender demo from the recommended quickstart flow
 - **Update policy:** update this report (or append a new version) after reruns with material result changes
 
@@ -20,7 +20,7 @@
 - Pipeline run: `src/mle_marketplace_growth/recommender/run_pipeline.py`
 - Run used standard recommender contract from `docs/recommender/spec.md` (split/method/selection/metrics).
 
-From `artifacts/recommender/train_metrics.json`:
+From `artifacts/recommender/as_of=<recommender_max_event_date>/train_metrics.json`:
 - embedding dim: `64`
 - epochs: `12`
 - learning rate: `0.003`
@@ -83,12 +83,12 @@ Metric consistency check:
 ## 4) Serving Outputs and Artifact Health
 
 Key outputs present:
-- `artifacts/recommender/topk_recommendations.csv`
-- `artifacts/recommender/model_bundle.pkl`
-- `artifacts/recommender/ann_index.bin`
-- `artifacts/recommender/ann_index_meta.json`
-- `artifacts/recommender/output_validation_summary.json`
-- `artifacts/recommender/output_interpretation.md`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/topk_recommendations.csv`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/model_bundle.pkl`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index.bin`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index_meta.json`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/output_validation_summary.json`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/output_interpretation.md`
 
 Validation summary status:
 - overall `passed=true`

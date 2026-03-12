@@ -36,7 +36,7 @@ Datetime ownership/bounds:
 |---|---|---|
 | Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.parquet`, `user_item_splits.parquet`, `user_index.parquet`, `item_index.parquet` |
 | Train/evaluate | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
-| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
+| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `item_embedding_index.json`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
 | Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
 
 ## Model Contract
@@ -52,14 +52,14 @@ Datetime ownership/bounds:
 
 ## Artifact Contract
 
-Training/evaluation artifacts (`artifacts/recommender/`):
+Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
 
 - `train_metrics.json`
 - `validation_retrieval_metrics.json`
 - `test_retrieval_metrics.json`
 - `model_bundle.pkl`
 
-Retrieval artifacts (`artifacts/recommender/`):
+Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
 
 - `item_embeddings.npy`
 - `item_embedding_index.json`
@@ -67,7 +67,7 @@ Retrieval artifacts (`artifacts/recommender/`):
 - `ann_index_meta.json`
 - `topk_recommendations.csv`
 
-Validation/report artifacts (`artifacts/recommender/`):
+Validation/report artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
 
 - `output_validation_summary.json`
 - `output_interpretation.md`

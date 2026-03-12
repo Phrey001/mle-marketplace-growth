@@ -1,23 +1,13 @@
 """Build purchase-propensity gold datasets for a strict 12-month panel."""
 
 import argparse
-import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import duckdb
-from dateutil.relativedelta import relativedelta
+from mle_marketplace_growth.helpers import cfg_required, generate_snapshot_dates, load_yaml_defaults, write_json
 
-from .build_helpers import copy_table_to_parquet, load_shared_silver_table, load_sql_assets, load_yaml_defaults, run_dq_check
-
-
-def _generate_snapshot_dates(panel_end_date: date) -> list[date]:
-    """Build the strict 12-month snapshot list ending on panel_end_date."""
-    # 12 inclusive snapshots: offsets -11..0 from the end date.
-    snapshots = [panel_end_date + relativedelta(months=offset) for offset in range(-11, 1)]
-    if snapshots[-1] != panel_end_date:
-        raise ValueError("Derived monthly snapshot panel does not end on panel_end_date")
-    return snapshots
+from .build_helpers import copy_table_to_parquet, load_shared_silver_table, load_sql_assets, run_dq_check
 
 
 def _resolve_purchase_paths(propensity_root: Path, as_of_date: date) -> tuple[Path, Path, Path, Path]:
@@ -55,15 +45,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build purchase-propensity gold datasets for a strict 12-month panel.")
     parser.add_argument("--config", required=True, help="Engine YAML config file")
     args = parser.parse_args()
-    cfg = load_yaml_defaults(args.config, "Engine config").get
+    cfg = load_yaml_defaults(args.config, "Engine config")
 
     # Resolve inputs and required assets.
-    panel_end_date_raw = cfg("panel_end_date", None)
-    if not panel_end_date_raw:
-        raise ValueError("panel_end_date is required in config")
-    panel_end_date = date.fromisoformat(panel_end_date_raw)
+    panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
 
-    output_root = Path(cfg("output_root", "data"))
+    output_root = Path(str(cfg.get("output_root", "data")))
     sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
     shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
     propensity_root = output_root / "gold" / "feature_store" / "purchase_propensity"
@@ -76,7 +63,7 @@ def main() -> None:
         raise ValueError("No rows in silver_transactions_line_items; cannot build gold layers")
 
     # Build and export one gold snapshot per month for the strict 12-month panel.
-    for as_of_date in _generate_snapshot_dates(panel_end_date):
+    for as_of_date in generate_snapshot_dates(panel_end_date):
         if as_of_date < silver_min_date or as_of_date > silver_max_date:
             raise ValueError(
                 f"Purchase propensity as_of_date {as_of_date} is outside available silver event_date bounds "
@@ -110,7 +97,7 @@ def main() -> None:
             "quality": {"raw_total_rows": None, "raw_bad_timestamp_rows": None, "raw_bad_timestamp_ratio": None},
             "artifacts": {name: {"path": str(path), "rows": artifact_rows[name]} for name, _, path in artifacts},
         }
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        write_json(manifest_path, manifest)
         print(f"Wrote run manifest: {manifest_path}")
 
 

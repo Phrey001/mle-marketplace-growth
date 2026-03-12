@@ -2,11 +2,13 @@
 
 import argparse
 import hashlib
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from mle_marketplace_growth.helpers import cfg_required, generate_snapshot_dates, load_yaml_defaults
 from mle_marketplace_growth.purchase_propensity.constants import (
     ALLOWED_FEATURE_LOOKBACK_WINDOWS,
     ALLOWED_PREDICTION_WINDOWS,
@@ -15,6 +17,7 @@ from mle_marketplace_growth.purchase_propensity.constants import (
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
     _build_train_metrics_payload,
     _dump_model_artifact,
+    _offline_eval_paths,
     _write_metrics_artifact,
     _write_predictions_csv,
 )
@@ -24,7 +27,7 @@ from mle_marketplace_growth.purchase_propensity.helpers.data import (
     _split_df_rows_10_1_1,
 )
 from mle_marketplace_growth.purchase_propensity.helpers.metrics import _propensity_quality_metrics
-from mle_marketplace_growth.purchase_propensity.helpers.modeling import (
+from mle_marketplace_growth.purchase_propensity.helpers.models import (
     _fit_test_conditional_revenue_model_wrapper,
     _fit_test_propensity_model_wrapper,
     _fit_validation_conditional_revenue_model_wrapper,
@@ -37,43 +40,6 @@ def _stable_ratio(key: str) -> float:
     """
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return int(digest[:16], 16) / float(0xFFFFFFFFFFFFFFFF)
-
-
-def _split_rows(rows: list[dict]) -> tuple[list[dict], list[dict], list[dict], str]:
-    """What: Backward-compatible row-list split helper using strict 10/1/1 date protocol.
-    Why: Preserves legacy unit-test imports while train flow now uses DataFrames directly.
-    """
-    df = pd.DataFrame(rows)
-    train_df, validation_df, test_df, split_description = _split_df_rows_10_1_1(df, date_column="as_of_date")
-    return (
-        train_df.to_dict(orient="records"),
-        validation_df.to_dict(orient="records"),
-        test_df.to_dict(orient="records"),
-        split_description,
-    )
-
-
-def _load_training_rows(
-    input_path: Path,
-    feature_columns: list[str],
-    purchase_label_column: str,
-    revenue_label_column: str,
-) -> list[dict]:
-    """What: Backward-compatible loader that returns row dicts for tests.
-    Why: Keeps old test helpers available after migration to typed DataFrame loading.
-    """
-    try:
-        typed_df = _load_snapshot_rows(
-            input_path,
-            feature_columns=feature_columns,
-            purchase_label_column=purchase_label_column,
-            revenue_label_column=revenue_label_column,
-        )
-    except ValueError as error:
-        if str(error).startswith("Missing required columns"):
-            raise KeyError(str(error)) from error
-        raise
-    return typed_df.to_dict(orient="records")
 
 
 def _apply_spend_cap(df: pd.DataFrame, spend_feature: str, spend_cap_value: float) -> None:
@@ -100,7 +66,7 @@ def _apply_feature_encoding(feature_df: pd.DataFrame, encoded_columns: list[str]
 
 
 def _policy_scores(
-    df: pd.DataFrame | list[dict],
+    df: pd.DataFrame,
     propensity_scores: np.ndarray,
     predicted_conditional_revenue: np.ndarray,
     feature_lookback_days: int,
@@ -108,15 +74,6 @@ def _policy_scores(
     """What: Build expected-value, random, and RFM policy scores per row.
     Why: Enables side-by-side offline policy comparison on the same population.
     """
-    if not isinstance(df, pd.DataFrame):
-        # Backward-compatible path for tests that pass list[dict] rows.
-        normalized_rows: list[dict] = []
-        for row in df:
-            if "features" in row and isinstance(row["features"], dict):
-                normalized_rows.append({k: v for k, v in row.items() if k != "features"} | row["features"])
-            else:
-                normalized_rows.append(row)
-        df = pd.DataFrame(normalized_rows)
     propensity_scores = np.asarray(propensity_scores, dtype=float)
     predicted_conditional_revenue = np.asarray(predicted_conditional_revenue, dtype=float)
 
@@ -137,25 +94,41 @@ def _policy_scores(
     return expected_value_scores, random_scores, rfm_scores
 
 
-def main() -> None:
-    """What: Train propensity and conditional revenue models, then write artifacts.
-    Why: Produces deterministic offline backtest outputs for policy evaluation.
+def run_training(
+    config_path: Path,
+    input_paths: list[Path] | None = None,
+    output_dir: Path | None = None,
+    prediction_window_days: int | None = None,
+    feature_lookback_days: int | None = None,
+    force_propensity_model: str | None = None,
+) -> None:
+    """What: Train propensity + conditional revenue models and write offline artifacts.
+    Why: Provides one in-process entrypoint shared by CLI and orchestrators.
     """
-    parser = argparse.ArgumentParser(description="Train propensity scoring models and backtest targeting policies.")
-    parser.add_argument("--input-path", action="append", default=None, help="Path to training dataset parquet (repeat --input-path for multi-snapshot panel; action=append collects multiple values)")
-    parser.add_argument("--output-dir", default="artifacts/purchase_propensity", help="Output directory for model and metrics")
-    parser.add_argument("--prediction-window-days", type=int, default=30, help="Prediction horizon for purchase/revenue labels: 30, 60, 90")
-    parser.add_argument("--feature-lookback-days", type=int, default=90, help="Feature lookback profile: 60, 90, 120")
-    parser.add_argument("--force-propensity-model", choices=["logistic_regression", "xgboost"], required=True, help="Frozen propensity model from sensitivity or fixed config.")
-    args = parser.parse_args()
+    # 0) Load config and resolve effective runtime settings.
+    cfg = load_yaml_defaults(str(config_path), "Engine config")
 
-    # 1) Validate key inputs and window settings.
-    if args.prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
-    if args.feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
+    panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
+    output_root = Path(str(cfg_required(cfg, "output_root")))
+    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    default_offline_paths = _offline_eval_paths(artifacts_dir)
+    prediction_window_days = int(prediction_window_days) if prediction_window_days is not None else int(cfg_required(cfg, "prediction_window_days"))
+    feature_lookback_days = int(feature_lookback_days) if feature_lookback_days is not None else int(cfg_required(cfg, "feature_lookback_days"))
+    force_propensity_model = force_propensity_model or cfg.get("force_propensity_model", None)
+    if not force_propensity_model:
+        raise ValueError("--force-propensity-model is required for train.py (set in config fixed mode or pass CLI override)")
+    output_dir = output_dir or default_offline_paths.root
+
+    # 1) Validate inputs and window settings.
+    if prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
+    if feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
 
     # 2) Resolve input snapshots for the strict 12-month panel.
-    if not args.input_path: raise ValueError("--input-path is required (repeat for multi-snapshot panel)")
-    input_paths = [Path(path) for path in args.input_path]  # Each input path is one snapshot in the strict 12-month panel; convert to python list
+    if input_paths is None:
+        input_paths = [
+            output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset" / f"as_of_date={as_of_date}" / "propensity_train_dataset.parquet"
+            for as_of_date in [snapshot.isoformat() for snapshot in generate_snapshot_dates(panel_end_date)]
+        ]
     missing_inputs = [path for path in input_paths if not path.exists()]  # collect paths missing on disk if any
     if missing_inputs: raise FileNotFoundError(f"Input path not found: {missing_inputs[0]}")
 
@@ -166,13 +139,13 @@ def main() -> None:
         "frequency_30d",
         "monetary_30d",
         # dependent on lookback days
-        f"frequency_{args.feature_lookback_days}d",
-        f"monetary_{args.feature_lookback_days}d",
-        f"avg_basket_value_{args.feature_lookback_days}d",
+        f"frequency_{feature_lookback_days}d",
+        f"monetary_{feature_lookback_days}d",
+        f"avg_basket_value_{feature_lookback_days}d",
     ]
-    spend_feature = f"monetary_{args.feature_lookback_days}d"  # feature already exist in feature_columns; for mutation in-place later
-    purchase_label_column = f"label_purchase_{args.prediction_window_days}d"  # selected-horizon purchase label; used for loading and CSV schema
-    revenue_label_column = f"label_net_revenue_{args.prediction_window_days}d"  # selected-horizon revenue label; used for loading revenue targets and CSV schema
+    spend_feature = f"monetary_{feature_lookback_days}d"  # feature already exist in feature_columns; for mutation in-place later
+    purchase_label_column = f"label_purchase_{prediction_window_days}d"  # selected-horizon purchase label; used for loading and CSV schema
+    revenue_label_column = f"label_net_revenue_{prediction_window_days}d"  # selected-horizon revenue label; used for loading revenue targets and CSV schema
 
     # 4) Load DataFrame, split into 10/1/1, and cap long-window spend.
     data_df = _load_snapshot_rows(
@@ -210,7 +183,7 @@ def main() -> None:
         train_purchase_labels,
         validation_matrix,
         validation_purchase_labels,
-        model_name=args.force_propensity_model,
+        model_name=force_propensity_model,
         bins=10,
     )
     selected_model_name = str(selected_result["model_name"])
@@ -241,12 +214,10 @@ def main() -> None:
     train_val_df = pd.concat([train_df, validation_df], ignore_index=True)
     train_val_purchase_labels = train_val_df["purchase_label"].to_numpy(dtype=int)
     train_val_conditional_revenue_labels = train_val_df["revenue_label"].to_numpy(dtype=float)
-    # Refit one-hot column mapping on train+validation rows to avoid any label leakage from test rows.
-    # Build raw feature tables (numeric + country) for the refit/test stage.
     train_val_feature_df = train_val_df[[*feature_columns, "country"]].copy()
     test_feature_df = test_df[[*feature_columns, "country"]].copy()
-    train_val_encoded_df, train_val_encoded_feature_columns = _fit_feature_encoding(train_val_feature_df)  # Fit one-hot schema on refit rows only.
-    test_encoded_df = _apply_feature_encoding(test_feature_df, train_val_encoded_feature_columns)  # Apply frozen refit schema to test rows, then convert to model matrices.
+    train_val_encoded_df, train_val_encoded_feature_columns = _fit_feature_encoding(train_val_feature_df)
+    test_encoded_df = _apply_feature_encoding(test_feature_df, train_val_encoded_feature_columns)
     train_val_matrix = train_val_encoded_df.to_numpy(dtype=float)
     test_matrix = test_encoded_df.to_numpy(dtype=float)
 
@@ -256,7 +227,6 @@ def main() -> None:
         test_matrix,
         selected_model_name,
     )
-    # 7a) Reuse the frozen revenue model choice from validation; no model-type re-selection on test.
     revenue_model, revenue_model_name, revenue_fallback_value, test_predicted_conditional_revenue, revenue_test_quality = _fit_test_conditional_revenue_model_wrapper(
         train_val_matrix,
         train_val_purchase_labels,
@@ -271,16 +241,16 @@ def main() -> None:
     test_quality_metrics = _propensity_quality_metrics(test_purchase_labels, test_propensity_scores, bins=10)
 
     # 8) Build policy scores for validation/test slices.
-    test_expected_value_scores, test_random_scores, test_rfm_scores = _policy_scores(test_df, test_propensity_scores, test_predicted_conditional_revenue, args.feature_lookback_days)
-    validation_expected_value_scores, validation_random_scores, validation_rfm_scores = _policy_scores(validation_df, validation_propensity_scores, validation_revenue_predictions, args.feature_lookback_days)
+    test_expected_value_scores, test_random_scores, test_rfm_scores = _policy_scores(test_df, test_propensity_scores, test_predicted_conditional_revenue, feature_lookback_days)
+    validation_expected_value_scores, validation_random_scores, validation_rfm_scores = _policy_scores(validation_df, validation_propensity_scores, validation_revenue_predictions, feature_lookback_days)
 
     # 9) Persist model, metrics, and scored outputs.
-    output_dir = Path(args.output_dir)  # Root folder for all training artifacts from this run.
     output_dir.mkdir(parents=True, exist_ok=True)
-    model_path = output_dir / "propensity_model.pkl"  # Pickle artifact with fitted models + metadata used for downstream scoring.
-    metrics_path = output_dir / "train_metrics.json"  # JSON summary of split sizes, model choices, and validation/test quality metrics.
-    validation_scores_path = output_dir / "validation_predictions.csv"  # Row-level validation predictions for review/debug/policy replay.
-    test_scores_path = output_dir / "test_predictions.csv"  # Row-level test predictions for final offline backtest analysis.
+    paths = default_offline_paths if output_dir == default_offline_paths.root else None
+    model_path = (paths.model_path if paths else output_dir / "propensity_model.pkl")
+    metrics_path = (paths.metrics_path if paths else output_dir / "train_metrics.json")
+    validation_scores_path = (paths.validation_predictions_path if paths else output_dir / "validation_predictions.csv")
+    test_scores_path = (paths.test_predictions_path if paths else output_dir / "test_predictions.csv")
 
     _dump_model_artifact(
         model_path,
@@ -292,16 +262,16 @@ def main() -> None:
         feature_columns,
         train_val_encoded_feature_columns,
         spend_cap_value,
-        args.prediction_window_days,
-        args.feature_lookback_days,
+        prediction_window_days,
+        feature_lookback_days,
     )
 
     metrics_payload = _build_train_metrics_payload(
         input_paths,
         purchase_label_column,
         revenue_label_column,
-        args.prediction_window_days,
-        args.feature_lookback_days,
+        prediction_window_days,
+        feature_lookback_days,
         split_description,
         spend_cap_value,
         revenue_model_name,
@@ -326,7 +296,7 @@ def main() -> None:
         validation_df,
         purchase_label_column,
         revenue_label_column,
-        args.prediction_window_days,
+        prediction_window_days,
         validation_propensity_scores,
         validation_revenue_predictions,
         validation_expected_value_scores,
@@ -338,7 +308,7 @@ def main() -> None:
         test_df,
         purchase_label_column,
         revenue_label_column,
-        args.prediction_window_days,
+        prediction_window_days,
         test_propensity_scores,
         test_predicted_conditional_revenue,
         test_expected_value_scores,
@@ -351,6 +321,20 @@ def main() -> None:
     print(f"Wrote validation predictions: {validation_scores_path}")
     print(f"Wrote test predictions: {test_scores_path}")
     print(f"Selected model: {selected_model_name}")
+
+
+def main() -> None:
+    """What: Train propensity and conditional revenue models, then write artifacts.
+    Why: Produces deterministic offline backtest outputs for policy evaluation.
+    """
+    # ===== CLI Args =====
+    parser = argparse.ArgumentParser(description="Train propensity scoring models and backtest targeting policies.")
+    parser.add_argument("--config", required=True, help="Purchase propensity YAML config")
+    args = parser.parse_args()
+
+    run_training(
+        config_path=Path(args.config),
+    )
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silve
 PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml
 
 # Fixed small-grid tuning sweep (heavier than main run)
-PYTHONPATH=src python scripts/tune_recommender_minimal.py --config configs/recommender/default.yaml
+PYTHONPATH=src python scripts/tune_recommender_minimal.py
 ```
 
 ## Recommended Run
@@ -45,11 +45,8 @@ PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recomme
 
 ```bash
 # Train and offline-evaluate popularity/MF/two-tower from prebuilt gold
-PYTHONPATH=src python -m mle_marketplace_growth.recommender.train \
-  --splits-path data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet \
-  --user-index-path data/gold/feature_store/recommender/user_index/user_index.parquet \
-  --item-index-path data/gold/feature_store/recommender/item_index/item_index.parquet \
-  --output-dir artifacts/recommender
+# (all paths + hyperparameters are read from YAML config)
+PYTHONPATH=src python -m mle_marketplace_growth.recommender.train --config configs/recommender/default.yaml
 ```
 
 Validation note:
@@ -59,11 +56,8 @@ Validation note:
 ### 3) Serve Batch (predict only; no split logic and no offline evaluation inside scoring)
 
 ```bash
-# Generate Top-K candidates from frozen model bundle
-PYTHONPATH=src python -m mle_marketplace_growth.recommender.predict \
-  --model-bundle artifacts/recommender/model_bundle.pkl \
-  --output-csv artifacts/recommender/topk_recommendations.csv \
-  --top-k 20
+# Generate serving retrieval artifacts + Top-K candidates from frozen model bundle
+PYTHONPATH=src python -m mle_marketplace_growth.recommender.predict --config configs/recommender/default.yaml
 ```
 
 ### 4) Demo Wrapper (convenience path)
@@ -88,12 +82,15 @@ Contract details (split/model/artifact/acceptance): `docs/recommender/spec.md`.
 
 ## Outputs To Review
 
+All artifacts are written under:
+- `artifacts/recommender/as_of=<recommender_max_event_date>/` (from `configs/recommender/default.yaml`)
+
 | Priority | Artifact(s) | Why |
 |---|---|---|
-| Must | `artifacts/recommender/output_validation_summary.json` | Confirms artifact contract and health checks |
-| Must | `artifacts/recommender/output_interpretation.md` | Fast narrative summary of run outcomes |
-| Must | `artifacts/recommender/validation_retrieval_metrics.json`, `artifacts/recommender/test_retrieval_metrics.json` | Core retrieval quality evidence |
-| Must | `artifacts/recommender/topk_recommendations.csv` | Serving-style top-K output |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/output_validation_summary.json` | Confirms artifact contract and health checks |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/output_interpretation.md` | Fast narrative summary of run outcomes |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/validation_retrieval_metrics.json`, `artifacts/recommender/as_of=<recommender_max_event_date>/test_retrieval_metrics.json` | Core retrieval quality evidence |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/topk_recommendations.csv` | Serving-style top-K output |
 | Must (manual) | `docs/recommender/analysis_report.md` | Refresh report after rerun |
 
 ## Tests

@@ -17,30 +17,18 @@ import yaml
 
 
 def _run_train(
-    splits_path: Path,
-    user_index_path: Path,
-    item_index_path: Path,
+    trial_config_path: Path,
     output_dir: Path,
-    top_ks: str,
-    config: dict[str, str | int | float],
 ) -> None:
     cmd = [
         sys.executable,
         "-m",
         "mle_marketplace_growth.recommender.train",
-        "--splits-path",
-        str(splits_path),
-        "--user-index-path",
-        str(user_index_path),
-        "--item-index-path",
-        str(item_index_path),
+        "--config",
+        str(trial_config_path),
         "--output-dir",
         str(output_dir),
-        "--top-ks",
-        top_ks,
     ]
-    for key, value in config.items():
-        cmd.extend([f"--{key.replace('_', '-')}", str(value)])
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
@@ -121,11 +109,33 @@ def main() -> None:
     results: list[dict] = []
     # Baseline trial uses current YAML defaults so tuning is comparable to main pipeline settings.
     trial_dir = output_root / "trial_default"
-    _run_train(splits_path, user_index_path, item_index_path, trial_dir, args.top_ks, default_cfg)
+    trial_config = {
+        **config_payload,
+        **default_cfg,
+        "splits_path": str(splits_path),
+        "user_index_path": str(user_index_path),
+        "item_index_path": str(item_index_path),
+        "top_ks": args.top_ks,
+    }
+    trial_config_path = trial_dir / "trial_config.yaml"
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
+    _run_train(trial_config_path=trial_config_path, output_dir=trial_dir)
     results.append(_trial_result(trial_dir, "trial_default", default_cfg))
     for i, cfg in enumerate(small_grid, start=1):
         tdir = output_root / f"trial_{i}"
-        _run_train(splits_path, user_index_path, item_index_path, tdir, args.top_ks, cfg)
+        trial_config = {
+            **config_payload,
+            **cfg,
+            "splits_path": str(splits_path),
+            "user_index_path": str(user_index_path),
+            "item_index_path": str(item_index_path),
+            "top_ks": args.top_ks,
+        }
+        trial_config_path = tdir / "trial_config.yaml"
+        tdir.mkdir(parents=True, exist_ok=True)
+        trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
+        _run_train(trial_config_path=trial_config_path, output_dir=tdir)
         results.append(_trial_result(tdir, f"trial_{i}", cfg))
 
     best = max(results, key=lambda r: r["validation_recall_at_20"])

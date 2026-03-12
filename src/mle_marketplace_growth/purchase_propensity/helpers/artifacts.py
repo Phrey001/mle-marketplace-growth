@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import pickle
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,8 +12,59 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from mle_marketplace_growth.helpers import write_json
 from mle_marketplace_growth.purchase_propensity.constants import SPEND_CAP_QUANTILE
 
+
+@dataclass(frozen=True)
+class OfflineEvalPaths:
+    root: Path
+    model_path: Path
+    metrics_path: Path
+    validation_predictions_path: Path
+    test_predictions_path: Path
+    validation_policy_path: Path
+    test_policy_path: Path
+    window_sensitivity_path: Path
+    window_validation_plot_path: Path
+
+
+@dataclass(frozen=True)
+class ReportPaths:
+    root: Path
+    validation_summary_path: Path
+    interpretation_path: Path
+
+
+def _offline_eval_paths(artifacts_dir: Path) -> OfflineEvalPaths:
+    """Return standard offline-eval artifact paths under artifacts_dir/offline_eval."""
+    root = artifacts_dir / "offline_eval"
+    return OfflineEvalPaths(
+        root=root,
+        model_path=root / "propensity_model.pkl",
+        metrics_path=root / "train_metrics.json",
+        validation_predictions_path=root / "validation_predictions.csv",
+        test_predictions_path=root / "test_predictions.csv",
+        validation_policy_path=root / "offline_policy_budget_validation.json",
+        test_policy_path=root / "offline_policy_budget_test.json",
+        window_sensitivity_path=root / "window_sensitivity.json",
+        window_validation_plot_path=root / "window_validation_dashboard.png",
+    )
+
+
+def _report_paths(artifacts_dir: Path) -> ReportPaths:
+    """Return standard report artifact paths under artifacts_dir/report."""
+    root = artifacts_dir / "report"
+    return ReportPaths(
+        root=root,
+        validation_summary_path=root / "output_validation_summary.json",
+        interpretation_path=root / "output_interpretation.md",
+    )
+
+
+def _serving_prediction_scores_path(artifacts_dir: Path, panel_end_date: date) -> Path:
+    """Return standard serving-batch prediction CSV path for panel_end_date."""
+    return artifacts_dir / "serving_batch" / f"as_of_date={panel_end_date.isoformat()}" / "prediction_scores.csv"
 
 def _dump_model_artifact(
     model_path: Path,
@@ -192,15 +244,14 @@ def _write_metrics_artifact(metrics_path: Path, metrics_payload: dict) -> None:
     """What: Write train metrics payload to JSON file.
     Why: Centralizes JSON formatting/writing for train artifacts.
     """
-    metrics_path.write_text(json.dumps(metrics_payload, indent=2) + "\n", encoding="utf-8")
+    write_json(metrics_path, metrics_payload)
 
 
 def _write_window_sensitivity_artifact(output_json_path: Path, output_payload: dict) -> None:
     """What: Write window sensitivity summary payload to JSON artifact.
     Why: Centralizes artifact-folder writes for sensitivity runs.
     """
-    output_json_path.parent.mkdir(parents=True, exist_ok=True)
-    output_json_path.write_text(json.dumps(output_payload, indent=2) + "\n", encoding="utf-8")
+    write_json(output_json_path, output_payload)
 
 
 def _write_window_validation_dashboard(output_payload: dict, output_path: Path) -> None:

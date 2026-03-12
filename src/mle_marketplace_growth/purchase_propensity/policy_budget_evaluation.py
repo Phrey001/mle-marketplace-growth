@@ -2,10 +2,10 @@
 
 import argparse
 import csv
-import json
 from pathlib import Path
 
 import numpy as np
+from mle_marketplace_growth.helpers import write_json
 
 POLICIES = [
     ("ml_top_expected_value", "expected_value_score"),
@@ -65,31 +65,25 @@ def _policy_metrics(
     }
 
 
-def main() -> None:
-    """What: CLI runner for offline budget policy comparison.
-    Why: Writes a single JSON artifact used by validation/reporting steps.
+def run_policy_budget_evaluation(
+    scores_csv: Path,
+    output_json: Path,
+    budget: float,
+    cost_per_user: float,
+    prediction_window_days: int,
+) -> None:
+    """What: Evaluate ML/Random/RFM policies under a fixed budget and write JSON artifact.
+    Why: Reusable in-process API for run_pipeline and CLI.
     """
-    # ===== CLI Arguments =====
-    parser = argparse.ArgumentParser(description="Budget-constrained policy comparison for ML/Random/RFM.")
-    parser.add_argument("--scores-csv", required=True, help="Validation/Test predictions CSV from train.py")
-    parser.add_argument("--output-json", required=True, help="Output JSON path")
-    parser.add_argument("--budget", type=float, required=True, help="Total incentive budget")
-    parser.add_argument("--cost-per-user", type=float, required=True, help="Cost per targeted user")
-    parser.add_argument("--prediction-window-days", type=int, choices=[30, 60, 90], default=30, help="Label horizon used for policy backtest metrics")
-    args = parser.parse_args()
+    if budget <= 0.0: raise ValueError("--budget must be greater than 0")
+    if cost_per_user <= 0.0: raise ValueError("--cost-per-user must be greater than 0")
 
-    # ===== Input Checks =====
-    if args.budget <= 0.0: raise ValueError("--budget must be greater than 0")
-    if args.cost_per_user <= 0.0: raise ValueError("--cost-per-user must be greater than 0")
-
-    # ===== Load Scores =====
-    purchase_label_col = f"label_purchase_{args.prediction_window_days}d"
-    revenue_label_col = f"label_net_revenue_{args.prediction_window_days}d"
-    rows = _load_rows(Path(args.scores_csv), purchase_label_col, revenue_label_col)
-    target_count = int(args.budget // args.cost_per_user)
+    purchase_label_col = f"label_purchase_{prediction_window_days}d"
+    revenue_label_col = f"label_net_revenue_{prediction_window_days}d"
+    rows = _load_rows(scores_csv, purchase_label_col, revenue_label_col)
+    target_count = int(budget // cost_per_user)
     if target_count < 1: raise ValueError("Budget is too small to target any user.")
 
-    # ===== Policy Comparison =====
     policy_comparison = [
         _policy_metrics(
             rows,
@@ -98,7 +92,7 @@ def main() -> None:
             target_count=target_count,
             purchase_label_col=purchase_label_col,
             revenue_label_col=revenue_label_col,
-            cost_per_user=args.cost_per_user,
+            cost_per_user=cost_per_user,
         )
         for policy_name, score_col in POLICIES
     ]
@@ -106,11 +100,11 @@ def main() -> None:
     by_policy = {row["policy"]: row for row in policy_comparison}
     output = {
         "scope": "offline_policy_budget_backtest_not_causal_promotional_incrementality",
-        "inputs": {"scores_csv": args.scores_csv},
+        "inputs": {"scores_csv": str(scores_csv)},
         "assumptions": {
-            "budget": args.budget,
-            "cost_per_user": args.cost_per_user,
-            "prediction_window_days": args.prediction_window_days,
+            "budget": budget,
+            "cost_per_user": cost_per_user,
+            "prediction_window_days": prediction_window_days,
             "target_count_by_budget": target_count,
             "policy_scoring_columns": {name: col for name, col in POLICIES},
         },
@@ -129,11 +123,30 @@ def main() -> None:
         },
     }
 
-    # ===== Write Outputs =====
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote budget policy evaluation: {output_path}")
+    write_json(output_json, output)
+    print(f"Wrote budget policy evaluation: {output_json}")
+
+
+def main() -> None:
+    """What: CLI runner for offline budget policy comparison.
+    Why: Writes a single JSON artifact used by validation/reporting steps.
+    """
+    # ===== CLI Args =====
+    parser = argparse.ArgumentParser(description="Budget-constrained policy comparison for ML/Random/RFM.")
+    parser.add_argument("--scores-csv", required=True, help="Validation/Test predictions CSV from train.py")
+    parser.add_argument("--output-json", required=True, help="Output JSON path")
+    parser.add_argument("--budget", type=float, required=True, help="Total incentive budget")
+    parser.add_argument("--cost-per-user", type=float, required=True, help="Cost per targeted user")
+    parser.add_argument("--prediction-window-days", type=int, choices=[30, 60, 90], default=30, help="Label horizon used for policy backtest metrics")
+    args = parser.parse_args()
+
+    run_policy_budget_evaluation(
+        scores_csv=Path(args.scores_csv),
+        output_json=Path(args.output_json),
+        budget=args.budget,
+        cost_per_user=args.cost_per_user,
+        prediction_window_days=args.prediction_window_days,
+    )
 
 
 if __name__ == "__main__":

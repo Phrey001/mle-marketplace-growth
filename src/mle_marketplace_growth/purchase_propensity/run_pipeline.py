@@ -4,40 +4,19 @@
 # Suggested review order: run_pipeline.py -> train.py -> helpers/* -> policy_budget_evaluation.py -> validate_artifact_outputs.py -> window_sensitivity.py.
 
 import argparse
-import json
-import subprocess
-import sys
 from datetime import date
 from pathlib import Path
 
-from dateutil.relativedelta import relativedelta
-from mle_marketplace_growth.feature_store.build_helpers import load_yaml_defaults
+from mle_marketplace_growth.helpers import cfg_required, generate_snapshot_dates, load_yaml_defaults
 from mle_marketplace_growth.purchase_propensity.constants import (
     ALLOWED_FEATURE_LOOKBACK_WINDOWS,
     ALLOWED_PREDICTION_WINDOWS,
 )
+from mle_marketplace_growth.purchase_propensity.helpers.artifacts import _offline_eval_paths, _report_paths
+from mle_marketplace_growth.purchase_propensity.policy_budget_evaluation import run_policy_budget_evaluation
+from mle_marketplace_growth.purchase_propensity.train import run_training
 from mle_marketplace_growth.purchase_propensity.validate_artifact_outputs import run_validation, write_interpretation
-
-
-# ===== Path + Date Helpers =====
-def _generate_snapshot_dates(panel_end_date: date) -> list[str]:
-    """What: Build 12 monthly as-of dates ending at panel_end_date.
-    Why: Enforces the strict 10/1/1 split panel expected by train.py.
-    """
-    # 12 inclusive snapshots: offsets -11..0 from the end date.
-    snapshots = [panel_end_date + relativedelta(months=offset) for offset in range(-11, 1)]
-    if snapshots[-1] != panel_end_date:
-        raise ValueError("Derived monthly snapshot panel does not end on --panel-end-date")
-    return [snapshot.isoformat() for snapshot in snapshots]
-
-
-def _run_module(module: str, *args: object) -> None:
-    """What: Execute a Python module as subprocess with forwarded CLI arguments.
-    Why: Keeps orchestration readable while preserving module-level CLIs.
-    """
-    command = [sys.executable, "-m", module, *map(str, args)]
-    print("Running:", " ".join(command))
-    subprocess.run(command, check=True)
+from mle_marketplace_growth.purchase_propensity.window_sensitivity import run_window_sensitivity
 
 
 # ===== Entry Point =====
@@ -45,47 +24,42 @@ def main() -> None:
     """What: Orchestrate sensitivity, train, policy-eval, and artifact validation.
     Why: Provides one deterministic entrypoint for end-to-end offline evaluation.
     """
-    # ===== CLI Arguments =====
+    # ===== CLI Args =====
     parser = argparse.ArgumentParser(description="Run purchase propensity pipeline end-to-end.")
     parser.add_argument("--config", required=True, help="YAML config file for pipeline arguments")
     args = parser.parse_args()
 
     # ===== Load Config =====
-    cfg = load_yaml_defaults(args.config, "Engine config").get
-
-    # Config keys expected in cycle YAML (with defaults where optional).
+    cfg = load_yaml_defaults(args.config, "Engine config")
+    # Config keys expected in cycle YAML.
     # Deterministic configs: always used (paths, dates, budgets).
     # Branching configs: control whether we run sensitivity or use fixed settings.
     # - window_selection_mode toggles sensitivity vs fixed path.
     # - force_propensity_model is required only in fixed mode; sensitivity mode derives it from window_sensitivity output.
-    panel_end_date_raw = cfg("panel_end_date", None)
-    output_root = Path(cfg("output_root", "data"))  # default path
-    prediction_window_days = int(cfg("prediction_window_days", 30))  # allowed values: 30/60/90
-    feature_lookback_days = int(cfg("feature_lookback_days", 90))  # allowed values: 60/90/120
-    window_selection_mode = cfg("window_selection_mode", "sensitivity")  # allowed values: sensitivity|fixed
-    force_propensity_model = cfg("force_propensity_model", None)
-    budget = float(cfg("budget", 5000.0))
-    cost_per_user = float(cfg("cost_per_user", 5.0))
-
-    # Optional key not present in cycle YAMLs (falls back to default).
-    # Default artifacts dir uses the config filename stem (stem removes .extension; e.g. artifacts/purchase_propensity/cycle_initial/).
-    artifacts_dir = Path(cfg("artifacts_dir", str(Path("artifacts/purchase_propensity") / Path(args.config).stem)))
-
-    # ===== Artifacts subfolders ===== 
-    offline_eval_dir = artifacts_dir / "offline_eval"  
-    report_dir = artifacts_dir / "report"
+    panel_end_date_raw = str(cfg_required(cfg, "panel_end_date"))
+    output_root = Path(str(cfg_required(cfg, "output_root")))
+    prediction_window_days = int(cfg_required(cfg, "prediction_window_days"))  # allowed values: 30/60/90
+    feature_lookback_days = int(cfg_required(cfg, "feature_lookback_days"))  # allowed values: 60/90/120
+    window_selection_mode = str(cfg_required(cfg, "window_selection_mode"))  # allowed values: sensitivity|fixed
+    force_propensity_model = cfg.get("force_propensity_model", None)
+    budget = float(cfg_required(cfg, "budget"))
+    cost_per_user = float(cfg_required(cfg, "cost_per_user"))
+    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    offline_paths = _offline_eval_paths(artifacts_dir)
+    report_paths = _report_paths(artifacts_dir)
 
     # ===== Validate Inputs =====
-    if not panel_end_date_raw: raise ValueError("--panel-end-date is required")
     panel_end_date = date.fromisoformat(panel_end_date_raw)
-    train_as_of_dates = _generate_snapshot_dates(panel_end_date)
+    train_as_of_dates = [snapshot.isoformat() for snapshot in generate_snapshot_dates(panel_end_date)]
+    if window_selection_mode not in {"sensitivity", "fixed"}:
+        raise ValueError("--window-selection-mode must be one of: sensitivity, fixed")
     if window_selection_mode == "fixed" and not force_propensity_model:  # fixed mode must supply a forced model
         raise ValueError("--force-propensity-model is required when window_selection_mode=fixed")
     if prediction_window_days not in ALLOWED_PREDICTION_WINDOWS: raise ValueError("--prediction-window-days must be one of: 30, 60, 90")
     if feature_lookback_days not in ALLOWED_FEATURE_LOOKBACK_WINDOWS: raise ValueError("--feature-lookback-days must be one of: 60, 90, 120")
     print(f"Window profile: prediction={prediction_window_days}d, feature_lookback={feature_lookback_days}d")
 
-    # ===== Build Training Input (Prebuilt Gold Required) =====
+    # ===== Validate Inputs (Prebuilt Gold Required) =====
     train_paths = [
         output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset"
         / f"as_of_date={as_of_date}"
@@ -105,14 +79,13 @@ def main() -> None:
     # - fixed mode: skip sensitivity run and do not require sensitivity artifact.
     require_window_sensitivity_artifact = window_selection_mode == "sensitivity"
     if require_window_sensitivity_artifact:
-        sensitivity_args: list[str | Path] = [
-            *[arg for path in train_paths for arg in ("--input-path", path)],
-            "--events-path", output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
-            "--output-json", offline_eval_dir / "window_sensitivity.json",
-            "--output-plot", offline_eval_dir / "window_validation_dashboard.png",
-        ]
-        _run_module("mle_marketplace_growth.purchase_propensity.window_sensitivity", *sensitivity_args)
-        window_sensitivity_output = json.loads((offline_eval_dir / "window_sensitivity.json").read_text(encoding="utf-8"))
+        window_sensitivity_output = run_window_sensitivity(
+            config_path=Path(args.config),
+            feature_paths=train_paths,
+            events_path=output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet",
+            output_json_path=offline_paths.window_sensitivity_path,
+            output_plot_path=offline_paths.window_validation_plot_path,
+        )
         freeze_decision = window_sensitivity_output["freeze_decision"]
         frozen_prediction_window_days = int(freeze_decision["selected_prediction_window_days"])
         frozen_feature_lookback_days = int(freeze_decision["selected_feature_lookback_days"])
@@ -135,49 +108,41 @@ def main() -> None:
         )
 
     # ===== Train + Offline Evaluate =====
-    # Build CLI args separately so we can append the optional forced model cleanly.
-    # Repeat --input-path for multi-snapshot panel.
-    train_args: list[str | Path | int] = [
-        *[arg for path in train_paths for arg in ("--input-path", path)],
-        "--output-dir", offline_eval_dir,
-        "--prediction-window-days", frozen_prediction_window_days,
-        "--feature-lookback-days", frozen_feature_lookback_days,
-    ]
-    if frozen_propensity_model: train_args.extend(["--force-propensity-model", frozen_propensity_model])
-    _run_module("mle_marketplace_growth.purchase_propensity.train", *train_args)
+    run_training(
+        config_path=Path(args.config),
+        output_dir=offline_paths.root,
+        prediction_window_days=frozen_prediction_window_days,
+        feature_lookback_days=frozen_feature_lookback_days,
+        force_propensity_model=frozen_propensity_model,
+    )
     # ===== Offline Policy Evaluation (Validation + Test) =====
-    # Build policy_eval_args once since it is reused for validation and test runs.
-    policy_eval_args = [
-        "--budget", budget,
-        "--cost-per-user", cost_per_user,
-        "--prediction-window-days", frozen_prediction_window_days,
-    ]
-    _run_module(
-        "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
-        "--scores-csv", offline_eval_dir / "validation_predictions.csv",
-        "--output-json", offline_eval_dir / "offline_policy_budget_validation.json",
-        *policy_eval_args,
+    run_policy_budget_evaluation(
+        scores_csv=offline_paths.validation_predictions_path,
+        output_json=offline_paths.validation_policy_path,
+        budget=budget,
+        cost_per_user=cost_per_user,
+        prediction_window_days=frozen_prediction_window_days,
     )
-    _run_module(
-        "mle_marketplace_growth.purchase_propensity.policy_budget_evaluation",
-        "--scores-csv", offline_eval_dir / "test_predictions.csv",
-        "--output-json", offline_eval_dir / "offline_policy_budget_test.json",
-        *policy_eval_args,
+    run_policy_budget_evaluation(
+        scores_csv=offline_paths.test_predictions_path,
+        output_json=offline_paths.test_policy_path,
+        budget=budget,
+        cost_per_user=cost_per_user,
+        prediction_window_days=frozen_prediction_window_days,
     )
-    # ===== Validation + Interpretation =====
-    summary_path = report_dir / "output_validation_summary.json"
+    # ===== Validate + Write Outputs =====
     passed, summary = run_validation(
-        artifacts_dir=offline_eval_dir,
+        artifacts_dir=offline_paths.root,
         expect_window_sensitivity=require_window_sensitivity_artifact,
-        output_json=summary_path,
+        output_json=report_paths.validation_summary_path,
     )
     if not passed:
         failed = [row for row in summary["checks"] if not row["passed"]]
         raise ValueError(f"Automated artifact validation failed: {failed}")
-    print(f"Wrote output validation summary: {summary_path}")
+    print(f"Wrote output validation summary: {report_paths.validation_summary_path}")
     interpretation_path = write_interpretation(
-        artifacts_dir=offline_eval_dir,
-        output_md=report_dir / "output_interpretation.md",
+        artifacts_dir=offline_paths.root,
+        output_md=report_paths.interpretation_path,
         expect_window_sensitivity=require_window_sensitivity_artifact,
     )
     print(f"Wrote output interpretation: {interpretation_path}")

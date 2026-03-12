@@ -2,12 +2,18 @@
 
 import argparse
 import pickle
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from mle_marketplace_growth.purchase_propensity.helpers.artifacts import _write_batch_prediction_scores_artifact
+from mle_marketplace_growth.helpers import cfg_required, load_yaml_defaults
+from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _offline_eval_paths,
+    _serving_prediction_scores_path,
+    _write_batch_prediction_scores_artifact,
+)
 from mle_marketplace_growth.purchase_propensity.helpers.data import _read_parquet_panel
 
 
@@ -16,21 +22,37 @@ def main() -> None:
     """What: Load a trained artifact and score one feature snapshot parquet.
     Why: Supports optional standalone batch scoring outside the full pipeline run.
     """
-    # ===== CLI Arguments =====
+    # ===== CLI Args =====
     parser = argparse.ArgumentParser(description="Batch-score propensity and expected value from feature snapshots.")
-    parser.add_argument("--input-path", default="data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-12-09/user_features_asof.parquet", help="Path to user feature snapshot parquet")
-    parser.add_argument("--model-path", default="artifacts/purchase_propensity/propensity_model.pkl", help="Path to trained propensity model bundle")
-    parser.add_argument("--output-csv", default="artifacts/purchase_propensity/prediction_scores.csv", help="Path to output scored CSV")
+    parser.add_argument("--config", required=True, help="Purchase propensity YAML config")
     args = parser.parse_args()
 
-    # ===== Input Checks =====
-    input_path = Path(args.input_path)
-    model_path = Path(args.model_path)
-    output_path = Path(args.output_csv)
+    # ===== Load Config =====
+    cfg = load_yaml_defaults(args.config, "Engine config")
+    output_root = Path(str(cfg_required(cfg, "output_root")))
+    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
+    panel_end_iso = panel_end_date.isoformat()
+    default_input_path = (
+        output_root
+        / "gold"
+        / "feature_store"
+        / "purchase_propensity"
+        / "user_features_asof"
+        / f"as_of_date={panel_end_iso}"
+        / "user_features_asof.parquet"
+    )
+    default_model_path = _offline_eval_paths(artifacts_dir).model_path
+    default_output_csv = _serving_prediction_scores_path(artifacts_dir, panel_end_date)
+
+    # ===== Validate Inputs =====
+    input_path = default_input_path
+    model_path = default_model_path
+    output_path = default_output_csv
     if not input_path.exists(): raise FileNotFoundError(f"Input path not found: {input_path}")
     if not model_path.exists(): raise FileNotFoundError(f"Model not found: {model_path}")
 
-    # ===== Load Trained Artifacts =====
+    # ===== Load Inputs =====
     with model_path.open("rb") as file:
         model_bundle = pickle.load(file)
 

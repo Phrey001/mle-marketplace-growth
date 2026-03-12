@@ -1,13 +1,14 @@
 """Recommender gold-layer build steps and CLI."""
 
 import argparse
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
 
-from .build_helpers import copy_table_to_parquet, load_shared_silver_table, load_sql_assets, load_yaml_defaults, run_dq_check
+from mle_marketplace_growth.helpers import load_yaml_defaults, write_json
+
+from .build_helpers import copy_table_to_parquet, load_shared_silver_table, load_sql_assets, run_dq_check
 
 
 def _parse_iso_date(raw_value: str, arg_name: str):
@@ -76,13 +77,12 @@ def main() -> None:
     args = parser.parse_args()
     defaults = load_yaml_defaults(args.shared_config, "Shared config")
     defaults.update(load_yaml_defaults(args.config, "Engine config"))
-    cfg = defaults.get
-    args.output_root = args.output_root or cfg("output_root", "data")
-    args.recommender_min_event_date = args.recommender_min_event_date or cfg("recommender_min_event_date", None)
-    args.recommender_max_event_date = args.recommender_max_event_date or cfg("recommender_max_event_date", None)
+    output_root_value = str(args.output_root or defaults.get("output_root", "data"))
+    recommender_min_event_date = args.recommender_min_event_date or defaults.get("recommender_min_event_date", None)
+    recommender_max_event_date = args.recommender_max_event_date or defaults.get("recommender_max_event_date", None)
 
     # Resolve paths + load SQL assets.
-    output_root = Path(args.output_root)
+    output_root = Path(output_root_value)
     sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
     shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
     gold_root = output_root / "gold" / "feature_store"
@@ -100,8 +100,8 @@ def main() -> None:
     build_recommender_gold(
         connection,
         sql,
-        recommender_min_event_date=args.recommender_min_event_date,
-        recommender_max_event_date=args.recommender_max_event_date,
+        recommender_min_event_date=recommender_min_event_date,
+        recommender_max_event_date=recommender_max_event_date,
         silver_min_date=silver_min_date,
         silver_max_date=silver_max_date,
     )
@@ -128,13 +128,13 @@ def main() -> None:
         "params": {
             "build_engine": "recommender",
             "split_version": "time_rank_v1",
-            "recommender_min_event_date": args.recommender_min_event_date,
-            "recommender_max_event_date": args.recommender_max_event_date,
+            "recommender_min_event_date": recommender_min_event_date,
+            "recommender_max_event_date": recommender_max_event_date,
         },
         "quality": {"raw_total_rows": None, "raw_bad_timestamp_rows": None, "raw_bad_timestamp_ratio": None},
         "artifacts": {name: {"path": str(path), "rows": artifact_rows[name]} for name, _, path in artifacts},
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_json(manifest_path, manifest)
     print(f"Wrote run manifest: {manifest_path}")
 
 

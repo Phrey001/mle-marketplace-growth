@@ -1,5 +1,6 @@
 panel_end_date: "2011-02-01" # monthly snapshot anchor (1st of month); rolling retrain anchor (+3 months vs initial cycle end); pipeline derives overlapping 11 prior months + this month (12 total)
 output_root: "data"
+artifacts_dir: "artifacts/purchase_propensity/cycle_retrain" # root folder for this cycle's offline_eval/ and report/ outputs
 window_selection_mode: "fixed" # keep structural decisions fixed; no reopen of structural search (allowed: sensitivity|fixed)
 force_propensity_model: "xgboost" # sensitivity mode ignores this (model chosen by sensitivity); fixed required: logistic_regression|xgboost
 prediction_window_days: 90 # use frozen value selected in initial-cycle sensitivity (allowed: 30/60/90)

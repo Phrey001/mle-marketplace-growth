@@ -6,8 +6,20 @@ from pathlib import Path
 
 import duckdb
 
+"""Data-loading helpers for recommender train/eval inputs.
+
+Workflow Steps:
+1) Read parquet rows through DuckDB into Python row dictionaries.
+2) Validate split schema and per-user chronology constraints.
+3) Build train/validation/test interaction maps.
+4) Load and validate contiguous user/item index tables.
+"""
+
 
 def _read_rows(path: Path) -> list[dict]:
+    """What: Load parquet rows into a list-of-dicts via DuckDB.
+    Why: Provides a simple typed row payload shared by downstream loaders.
+    """
     connection = duckdb.connect(database=":memory:")
     try:
         cursor = connection.execute("SELECT * FROM read_parquet(?)", [str(path)])
@@ -18,6 +30,9 @@ def _read_rows(path: Path) -> list[dict]:
 
 
 def _load_split_rows(path: Path) -> list[dict]:
+    """What: Load split parquet and validate required split-table columns.
+    Why: Ensures train/eval logic receives the expected split schema.
+    """
     rows = _read_rows(path)
     if not rows: raise ValueError(f"No rows found in split dataset: {path}")
     required = {"user_id", "item_id", "split", "event_ts"}
@@ -27,6 +42,9 @@ def _load_split_rows(path: Path) -> list[dict]:
 
 
 def _validate_split_chronology(rows: list[dict]) -> None:
+    """What: Enforce per-user train < validation < test temporal ordering.
+    Why: Prevents temporal leakage in recommender offline evaluation.
+    """
     per_user = defaultdict(lambda: {"train": [], "val": [], "test": []})
     for row in rows:
         split = row["split"].strip().lower()
@@ -53,6 +71,9 @@ def _validate_split_chronology(rows: list[dict]) -> None:
 
 
 def _build_interactions(rows: list[dict]) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+    """What: Convert split rows into user->item interaction maps by split.
+    Why: Provides compact structures for model training and metric evaluation.
+    """
     train = defaultdict(set)
     validation = defaultdict(set)
     test = defaultdict(set)
@@ -73,6 +94,9 @@ def _build_interactions(rows: list[dict]) -> tuple[dict[str, set[str]], dict[str
 
 
 def _load_entity_index(path: Path, id_col: str, idx_col: str) -> tuple[list[str], dict[str, int]]:
+    """What: Load entity index table and validate unique contiguous indices.
+    Why: Guarantees stable row-index mapping for embedding matrices.
+    """
     if not path.exists(): raise FileNotFoundError(f"Entity index file not found: {path}")
     rows = _read_rows(path)
     if not rows: raise ValueError(f"No rows found in entity index file: {path}")

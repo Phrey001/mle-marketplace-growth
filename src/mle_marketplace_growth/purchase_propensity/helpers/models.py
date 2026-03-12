@@ -46,8 +46,40 @@ def _fit_and_score_propensity_model(
     X_pred,
     model_name: str,
 ) -> tuple[object, np.ndarray]:
-    """What: Fit one calibrated propensity model and score prediction rows.
-    Why: Reuses one core fit/score path across validation and final refit stages.
+    """What: Fit a calibrated propensity model and produce predicted probabilities.
+    Why: Provides a shared fit/score path used in both validation and final refit stages.
+
+    Note: Calibration is important because the predicted probability is used
+    directly in expected-value ranking downstream.
+
+    Calibration:
+        Classification models often output probabilities that are poorly calibrated
+        (e.g., a predicted 0.8 probability may only correspond to ~0.6 actual event
+        frequency). Calibration adjusts these predicted probabilities so they better
+        reflect true outcome frequencies.
+
+        This implementation uses Platt scaling via
+        `CalibratedClassifierCV(method="sigmoid", cv=3)`.
+
+        Internally:
+            1) Split (X_fit, y_fit) into 3 folds
+            2) Train the base model on 2 folds
+            3) Predict probabilities on the held-out fold
+            4) Collect out-of-fold predictions
+            5) Fit a sigmoid mapping that adjusts the model's pre-calibrated predicted 
+                probabilities to calibrated probabilities
+
+    Temporal caveat:
+        The 3-fold CV used inside `CalibratedClassifierCV` ignores temporal ordering
+        and may mix rows from different snapshot timestamps within (X_fit, y_fit).
+
+        The leakage impact is limited because it occurs only within the training partition
+        and does not affect downstream validation or test evaluation:
+        a) Calibration only adjusts the model's pre-calibrated predicted probabilities.
+        b) The temporal mixing arises from the CV folds used to generate
+           out-of-fold predictions.
+        c) True model evaluation (validation/test) still respects the
+           temporal split and therefore remains leakage-free.
     """
     model = _build_propensity_model(model_name)
     calibrated_model = CalibratedClassifierCV(estimator=model, method="sigmoid", cv=3)

@@ -57,16 +57,10 @@ PYTHONPATH=src python scripts/report_policy_comparison_chart.py
 
 ```bash
 # Score latest cycle 1 snapshot with frozen model artifact
-PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict \
-  --input-path data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2010-11-01/user_features_asof.parquet \
-  --model-path artifacts/purchase_propensity/cycle_initial/offline_eval/propensity_model.pkl \
-  --output-csv artifacts/purchase_propensity/serving_batch/as_of_date=2010-11-01/prediction_scores.csv
+PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict --config configs/purchase_propensity/cycle_initial.yaml
 
 # Score latest cycle 2 snapshot with frozen model artifact
-PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict \
-  --input-path data/gold/feature_store/purchase_propensity/user_features_asof/as_of_date=2011-02-01/user_features_asof.parquet \
-  --model-path artifacts/purchase_propensity/cycle_retrain/offline_eval/propensity_model.pkl \
-  --output-csv artifacts/purchase_propensity/serving_batch/as_of_date=2011-02-01/prediction_scores.csv
+PYTHONPATH=src python -m mle_marketplace_growth.purchase_propensity.predict --config configs/purchase_propensity/cycle_retrain.yaml
 ```
 
 Stage 3 notes:
@@ -82,7 +76,7 @@ Notes:
 | Cycle 2 mode | `window_selection_mode=fixed` to avoid reopening structural search |
 | Shared dependency | Engine-specific gold build requires prebuilt shared silver (`build_shared_silver`) |
 | Gold dependency | ML pipeline consumes prebuilt purchase-propensity gold snapshots from `build_gold_purchase_propensity` |
-| Artifact folder default | `--config cycle_initial.yaml` maps to `artifacts/purchase_propensity/cycle_initial` (same for retrain); override with `--artifacts-dir` only when needed |
+| Artifact folder | Set explicitly in cycle YAML via `artifacts_dir` (e.g. `artifacts/purchase_propensity/cycle_initial`) |
 | Date validation | `panel_end_date` should be a monthly snapshot date (1st of month) and is validated against shared silver event-date bounds |
 | Artifact layout | Stage-2 outputs are grouped by purpose: `offline_eval/` (train/policy artifacts) and `report/` (validation summary + interpretation) |
 

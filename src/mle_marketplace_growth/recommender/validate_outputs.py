@@ -1,35 +1,75 @@
-"""Validate recommender artifacts and write a concise interpretation summary."""
+"""Validate recommender artifacts and write a concise interpretation summary.
+
+Workflow Steps:
+1) Resolve canonical artifact paths for one recommender run.
+2) Verify required files exist and load metric/index payloads.
+3) Run contract checks (selected model, metric bounds, ANN artifacts, Top-K rows).
+4) Write machine-readable validation summary JSON.
+5) Write human-readable interpretation markdown.
+"""
 
 from __future__ import annotations
 
 import argparse
 import csv
-import json
 from pathlib import Path
+
+from mle_marketplace_growth.helpers import read_json, write_json
+from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
+from mle_marketplace_growth.recommender.constants import ANN_BACKEND, EXPECTED_MODELS
+
+
+def _count_csv_rows(path: Path) -> int:
+    """What: Count data rows in a CSV artifact (excluding header).
+    Why: Supports non-empty output checks without loading full payload into memory.
+    """
+    with path.open("r", encoding="utf-8", newline="") as file:
+        return len(list(csv.DictReader(file)))
+
+
+def _core_artifact_paths(artifacts_dir: Path) -> dict[str, Path]:
+    """What: Build canonical recommender artifact file paths for one run.
+    Why: Keeps validation/interpretation readers aligned to one path contract.
+    """
+    return {
+        "train_metrics": artifacts_dir / "train_metrics.json",
+        "validation_metrics": artifacts_dir / "validation_retrieval_metrics.json",
+        "test_metrics": artifacts_dir / "test_retrieval_metrics.json",
+        "index_json": artifacts_dir / "item_embedding_index.json",
+        "ann_meta": artifacts_dir / "ann_index_meta.json",
+        "topk_csv": artifacts_dir / "topk_recommendations.csv",
+    }
+
+
+def _load_core_artifacts(artifacts_dir: Path) -> tuple[dict, dict, dict]:
+    """What: Load train/validation/test metrics JSON artifacts.
+    Why: Shared loader avoids duplicated JSON-read logic across report steps.
+    """
+    paths = _core_artifact_paths(artifacts_dir)
+    return (
+        read_json(paths["train_metrics"]),
+        read_json(paths["validation_metrics"]),
+        read_json(paths["test_metrics"]),
+    )
 
 
 def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tuple[bool, dict]:
+    """What: Validate recommender output artifacts against contract checks.
+    Why: Provides a deterministic pass/fail gate before report consumption.
+    """
     # ===== Load Inputs =====
-    train_metrics_path = artifacts_dir / "train_metrics.json"
-    validation_metrics_path = artifacts_dir / "validation_retrieval_metrics.json"
-    test_metrics_path = artifacts_dir / "test_retrieval_metrics.json"
-    index_json_path = artifacts_dir / "item_embedding_index.json"
-    ann_meta_path = artifacts_dir / "ann_index_meta.json"
-    topk_csv_path = artifacts_dir / "topk_recommendations.csv"
-    for path in [train_metrics_path, validation_metrics_path, test_metrics_path, index_json_path, ann_meta_path, topk_csv_path]:
+    paths = _core_artifact_paths(artifacts_dir)
+    for path in paths.values():
         if not path.exists(): raise FileNotFoundError(f"Required artifact not found: {path}")
-    train_metrics = json.loads(train_metrics_path.read_text(encoding="utf-8"))
-    validation_metrics = json.loads(validation_metrics_path.read_text(encoding="utf-8"))
-    test_metrics = json.loads(test_metrics_path.read_text(encoding="utf-8"))
-    index_json = json.loads(index_json_path.read_text(encoding="utf-8"))
-    ann_meta = json.loads(ann_meta_path.read_text(encoding="utf-8"))
-    with topk_csv_path.open("r", encoding="utf-8", newline="") as file:
-        topk_count = len(list(csv.DictReader(file)))
+    train_metrics, validation_metrics, test_metrics = _load_core_artifacts(artifacts_dir)
+    index_json = read_json(paths["index_json"])
+    ann_meta = read_json(paths["ann_meta"])
+    topk_count = _count_csv_rows(paths["topk_csv"])
 
     validation_rows = validation_metrics.get("rows", [])
     test_rows = test_metrics.get("rows", [])
     selected_model = train_metrics.get("selected_model_name")
-    expected_models = {"popularity", "mf", "two_tower"}
+    expected_models = EXPECTED_MODELS
 
     # ===== Run Checks =====
     checks = [
@@ -84,7 +124,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
             "check": "ann_index_artifacts_present",
             "description": "ANN metadata and FAISS ANN index artifact must be present.",
             "passed": (artifacts_dir / "ann_index.bin").exists()
-            and ann_meta.get("backend") == "faiss_hnsw_ip",
+            and ann_meta.get("backend") == ANN_BACKEND,
             "detail": f"ann_backend={ann_meta.get('backend')}",
         }
     )
@@ -93,16 +133,16 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
     summary = {"passed": passed, "artifacts_dir": str(artifacts_dir), "checks": checks}
     # ===== Write Outputs =====
     if output_json is not None:
-        output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        write_json(output_json, summary)
     return passed, summary
 
 
 def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> Path:
+    """What: Write a concise markdown interpretation from validated artifacts.
+    Why: Gives a fast human-readable summary for review and reporting.
+    """
     # ===== Load Inputs =====
-    train_metrics = json.loads((artifacts_dir / "train_metrics.json").read_text(encoding="utf-8"))
-    validation_metrics = json.loads((artifacts_dir / "validation_retrieval_metrics.json").read_text(encoding="utf-8"))
-    test_metrics = json.loads((artifacts_dir / "test_retrieval_metrics.json").read_text(encoding="utf-8"))
+    train_metrics, validation_metrics, test_metrics = _load_core_artifacts(artifacts_dir)
     selected_model = train_metrics.get("selected_model_name", "unknown")
     selection_rule = train_metrics.get("selection_rule", "")
     catalog_size = int(train_metrics.get("counts", {}).get("items_train_universe", 0))
@@ -152,20 +192,26 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
 
 
 def main() -> None:
-    # ===== CLI Arguments =====
+    """What: CLI wrapper for artifact validation and interpretation output.
+    Why: Exposes one command for contract checks and summary generation.
+    """
+    # ===== CLI Args =====
     parser = argparse.ArgumentParser(description="Validate recommender artifacts.")
-    parser.add_argument("--artifacts-dir", default="artifacts/recommender", help="Recommender artifacts directory")
-    parser.add_argument("--output-json", default="artifacts/recommender/output_validation_summary.json", help="Path for validation summary output")
+    parser.add_argument("--config", required=True, help="Recommender YAML config")
     args = parser.parse_args()
 
-    # ===== Run Validation =====
-    artifacts_dir = Path(args.artifacts_dir)
-    passed, summary = run_validation(artifacts_dir, output_json=Path(args.output_json))
+    # ===== Resolve Artifact Paths =====
+    runtime = load_recommender_runtime_config(args.config)
+    artifacts_dir = runtime.artifacts_dir
+    paths = artifact_paths(runtime)
+
+    # ===== Run =====
+    passed, summary = run_validation(artifacts_dir, output_json=paths.output_validation_summary)
     if not passed: raise SystemExit(f"Validation failed: {[row for row in summary['checks'] if not row['passed']]}")
-    # ===== Write Interpretation =====
-    interpretation_path = write_interpretation(artifacts_dir)
+    # ===== Write Outputs =====
+    interpretation_path = write_interpretation(artifacts_dir, output_md=paths.output_interpretation)
     print(f"Wrote interpretation: {interpretation_path}")
-    print(f"Validation passed: {args.output_json}")
+    print(f"Validation passed: {paths.output_validation_summary}")
 
 
 if __name__ == "__main__":

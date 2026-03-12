@@ -6,12 +6,9 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-from mle_marketplace_growth.recommender.train import (
-    _load_split_rows,
-    _train_two_tower,
-    _user_eval_pool,
-    _validate_split_chronology,
-)
+from mle_marketplace_growth.recommender.helpers.data import _load_split_rows, _validate_split_chronology
+from mle_marketplace_growth.recommender.helpers.eval import _user_eval_pool
+from mle_marketplace_growth.recommender.helpers.models import _train_two_tower
 
 
 class RecommenderMinimalTests(unittest.TestCase):

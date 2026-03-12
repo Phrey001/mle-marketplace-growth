@@ -12,6 +12,15 @@ class ValidateOutputsTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def _policy_payload(self, ml: float, random: float, rfm: float, targeted_users: int = 100, budget_spend: float = 500.0) -> dict:
+        return {
+            "policy_comparison": [
+                {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": ml, "targeted_users": targeted_users, "budget_spend": budget_spend},
+                {"policy": "random_baseline", "actual_revenue_per_targeted_user": random, "targeted_users": targeted_users, "budget_spend": budget_spend},
+                {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": rfm, "targeted_users": targeted_users, "budget_spend": budget_spend},
+            ]
+        }
+
     def test_run_validation_pass(self) -> None:
         # Happy path: supported model + full policy rows + sensitivity coverage.
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -27,23 +36,11 @@ class ValidateOutputsTest(unittest.TestCase):
             )
             self._write_json(
                 artifacts / "offline_policy_budget_validation.json",
-                {
-                    "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 10.0, "targeted_users": 100, "budget_spend": 500.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 100, "budget_spend": 500.0},
-                        {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": 9.0, "targeted_users": 100, "budget_spend": 500.0},
-                    ]
-                },
+                self._policy_payload(ml=10.0, random=5.0, rfm=9.0),
             )
             self._write_json(
                 artifacts / "offline_policy_budget_test.json",
-                {
-                    "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 10.0, "targeted_users": 100, "budget_spend": 500.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 100, "budget_spend": 500.0},
-                        {"policy": "rfm_heuristic", "actual_revenue_per_targeted_user": 9.0, "targeted_users": 100, "budget_spend": 500.0},
-                    ]
-                },
+                self._policy_payload(ml=10.0, random=5.0, rfm=9.0),
             )
             self._write_json(
                 artifacts / "window_sensitivity.json",
@@ -73,19 +70,13 @@ class ValidateOutputsTest(unittest.TestCase):
             self._write_json(
                 artifacts / "offline_policy_budget_validation.json",
                 {
-                    "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 4.0, "targeted_users": 0, "budget_spend": 0.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 0, "budget_spend": 0.0},
-                    ]
+                    "policy_comparison": self._policy_payload(ml=4.0, random=5.0, rfm=0.0, targeted_users=0, budget_spend=0.0)["policy_comparison"][:2]
                 },
             )
             self._write_json(
                 artifacts / "offline_policy_budget_test.json",
                 {
-                    "policy_comparison": [
-                        {"policy": "ml_top_expected_value", "actual_revenue_per_targeted_user": 4.0, "targeted_users": 0, "budget_spend": 0.0},
-                        {"policy": "random_baseline", "actual_revenue_per_targeted_user": 5.0, "targeted_users": 0, "budget_spend": 0.0},
-                    ]
+                    "policy_comparison": self._policy_payload(ml=4.0, random=5.0, rfm=0.0, targeted_users=0, budget_spend=0.0)["policy_comparison"][:2]
                 },
             )
             self._write_json(

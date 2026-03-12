@@ -4,11 +4,16 @@ import unittest
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
-from mle_marketplace_growth.purchase_propensity.train import _load_training_rows, _policy_scores, _split_rows, _stable_ratio
+from mle_marketplace_growth.purchase_propensity.helpers.data import _load_snapshot_rows, _split_df_rows_10_1_1
+from mle_marketplace_growth.purchase_propensity.train import _policy_scores
 
 
 class PurchasePropensityMinimalTests(unittest.TestCase):
+    def _rows_with_monthly_dates(self, year: int, day: int, count: int = 12) -> list[dict]:
+        return [{"user_id": f"u{idx}", "as_of_date": f"{year}-{idx + 1:02d}-{day:02d}"} for idx in range(count)]
+
     def _write_parquet(self, fieldnames: list[str], rows: list[dict]) -> Path:
         # Small helper for focused input fixtures per test.
         temp_dir = Path(tempfile.mkdtemp())
@@ -28,28 +33,10 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
 
     def test_window_overlap_test_chronological_split_order(self) -> None:
         # 12 monthly snapshots should split into 10/1/1 chronological buckets.
-        rows = []
-        for idx in range(12):
-            rows.append(
-                {
-                    "user_id": f"u{idx}",
-                    "as_of_date": f"2020-{idx + 1:02d}-01",
-                    "features": {
-                        "recency_days": 5.0,
-                        "frequency_30d": 1.0,
-                        "frequency_90d": 2.0,
-                        "monetary_30d": 10.0,
-                        "monetary_90d": 20.0,
-                        "avg_basket_value_90d": 10.0,
-                    },
-                    "purchase_label": 0.0,
-                    "revenue_label": 0.0,
-                }
-            )
-        train_rows, val_rows, test_rows, _ = _split_rows(rows)
-        train_dates = {row["as_of_date"] for row in train_rows}
-        val_dates = {row["as_of_date"] for row in val_rows}
-        test_dates = {row["as_of_date"] for row in test_rows}
+        train_df, val_df, test_df, _ = _split_df_rows_10_1_1(pd.DataFrame(self._rows_with_monthly_dates(2020, 1)))
+        train_dates = set(train_df["as_of_date"].tolist())
+        val_dates = set(val_df["as_of_date"].tolist())
+        test_dates = set(test_df["as_of_date"].tolist())
         self.assertEqual(len(train_dates), 10)
         self.assertEqual(len(val_dates), 1)
         self.assertEqual(len(test_dates), 1)
@@ -58,50 +45,25 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
 
     def test_split_leakage_test_no_date_overlap_between_subsets(self) -> None:
         # Train/validation/test snapshots must be disjoint.
-        rows = []
-        for idx in range(12):
-            rows.append(
-                {
-                    "user_id": f"user_{idx}",
-                    "as_of_date": f"2021-{idx + 1:02d}-15",
-                    "features": {
-                        "recency_days": 3.0,
-                        "frequency_30d": 1.0,
-                        "frequency_90d": 1.0,
-                        "monetary_30d": 5.0,
-                        "monetary_90d": 7.0,
-                        "avg_basket_value_90d": 7.0,
-                    },
-                    "purchase_label": 1.0 if idx % 2 else 0.0,
-                    "revenue_label": 2.0,
-                }
-            )
-        train_rows, val_rows, test_rows, _ = _split_rows(rows)
-        train_dates = {row["as_of_date"] for row in train_rows}
-        val_dates = {row["as_of_date"] for row in val_rows}
-        test_dates = {row["as_of_date"] for row in test_rows}
+        train_df, val_df, test_df, _ = _split_df_rows_10_1_1(pd.DataFrame(self._rows_with_monthly_dates(2021, 15)))
+        train_dates = set(train_df["as_of_date"].tolist())
+        val_dates = set(val_df["as_of_date"].tolist())
+        test_dates = set(test_df["as_of_date"].tolist())
         self.assertTrue(train_dates.isdisjoint(val_dates))
         self.assertTrue(train_dates.isdisjoint(test_dates))
         self.assertTrue(val_dates.isdisjoint(test_dates))
 
     def test_deterministic_seed_test_random_policy_score_is_stable(self) -> None:
         # Random policy scores are seeded and should be reproducible.
-        rows = [
-            {
-                "user_id": "u1",
-                "as_of_date": "2021-01-01",
-                "features": {"recency_days": 1.0, "frequency_90d": 2.0, "monetary_90d": 10.0},
-            },
-            {
-                "user_id": "u2",
-                "as_of_date": "2021-01-01",
-                "features": {"recency_days": 2.0, "frequency_90d": 3.0, "monetary_90d": 20.0},
-            },
-        ]
-        _, random_scores_first, _ = _policy_scores(rows, [0.1, 0.2], [100.0, 120.0], feature_lookback_days=90)
-        _, random_scores_second, _ = _policy_scores(rows, [0.1, 0.2], [100.0, 120.0], feature_lookback_days=90)
+        df = pd.DataFrame(
+            [
+                {"user_id": "u1", "as_of_date": "2021-01-01", "recency_days": 1.0, "frequency_90d": 2.0, "monetary_90d": 10.0},
+                {"user_id": "u2", "as_of_date": "2021-01-01", "recency_days": 2.0, "frequency_90d": 3.0, "monetary_90d": 20.0},
+            ]
+        )
+        _, random_scores_first, _ = _policy_scores(df, [0.1, 0.2], [100.0, 120.0], feature_lookback_days=90)
+        _, random_scores_second, _ = _policy_scores(df, [0.1, 0.2], [100.0, 120.0], feature_lookback_days=90)
         self.assertEqual(random_scores_first, random_scores_second)
-        self.assertEqual(_stable_ratio("fixed_key"), _stable_ratio("fixed_key"))
 
     def test_feature_column_existence_test_missing_feature_column_raises(self) -> None:
         # Missing required feature columns should fail fast at load time.
@@ -133,8 +95,8 @@ class PurchasePropensityMinimalTests(unittest.TestCase):
             }
         ]
         path = self._write_parquet(fieldnames, rows)
-        with self.assertRaises(KeyError):
-            _load_training_rows(
+        with self.assertRaises(ValueError):
+            _load_snapshot_rows(
                 path,
                 feature_columns=[
                     "recency_days",
