@@ -120,6 +120,7 @@ def _score_user_topk(
     """What: Score and rank Top-K item indices for one user.
     Why: Keeps run_predict loop focused on I/O while this helper handles model-specific scoring.
     """
+    # ===== Model Family: Popularity =====
     if selected_model_name == "popularity":
         candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
         if not candidate_indices:
@@ -130,10 +131,13 @@ def _score_user_topk(
         ranked_scores = [float(candidate_scores[idx]) for idx in top_local]
         return ranked_item_indices, ranked_scores
 
+    # ===== Model Family: MF / Two-Tower (ANN Retrieval) =====
     if len(seen_indices) >= item_count:
         return [], []
     if ann_index is None:
         raise ValueError("ANN index is required for non-popularity models.")
+
+    # Select user embedding vector based on selected model family.
     if selected_model_name == "mf":
         user_vector = mf_user_embeddings[user_index].reshape(1, -1)
     elif selected_model_name == "two_tower":
@@ -200,6 +204,7 @@ def run_predict(config_path: str) -> None:
     # ===== Score Users =====
     output_rows: list[list[str | int | float]] = []
     item_count = len(item_ids)
+    # Load ANN index only for ANN-backed model families.
     ann_index = _load_ann_index(ann_index_path, ann_meta_path) if selected in {"mf", "two_tower"} else None
     for user_id in user_ids:
         if user_id not in user_to_idx:
@@ -207,18 +212,36 @@ def run_predict(config_path: str) -> None:
         user_idx = user_to_idx[user_id]
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
-        ranked_item_indices, ranked_scores = _score_user_topk(
-            selected_model_name=selected,
-            user_index=user_idx,
-            top_k=top_k,
-            item_count=item_count,
-            seen_indices=seen_indices,
-            popularity_scores=popularity,
-            mf_user_embeddings=mf_user,
-            two_tower_user_embeddings=tt_user,
-            item_matrix=item_matrix,
-            ann_index=ann_index,
-        )
+        if selected == "popularity":
+            # ===== Model Family: Popularity =====
+            ranked_item_indices, ranked_scores = _score_user_topk(
+                selected_model_name=selected,
+                user_index=user_idx,
+                top_k=top_k,
+                item_count=item_count,
+                seen_indices=seen_indices,
+                popularity_scores=popularity,
+                mf_user_embeddings=mf_user,
+                two_tower_user_embeddings=tt_user,
+                item_matrix=item_matrix,
+                ann_index=None,
+            )
+        elif selected in {"mf", "two_tower"}:
+            # ===== Model Family: MF / Two-Tower =====
+            ranked_item_indices, ranked_scores = _score_user_topk(
+                selected_model_name=selected,
+                user_index=user_idx,
+                top_k=top_k,
+                item_count=item_count,
+                seen_indices=seen_indices,
+                popularity_scores=popularity,
+                mf_user_embeddings=mf_user,
+                two_tower_user_embeddings=tt_user,
+                item_matrix=item_matrix,
+                ann_index=ann_index,
+            )
+        else:
+            raise ValueError(f"Unsupported selected model: {selected}")
         if not ranked_item_indices:
             continue
 

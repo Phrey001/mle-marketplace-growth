@@ -165,8 +165,12 @@ def _train_candidate_models(
     """
     params = normalized_train_params
     train_pairs = _interaction_pairs(train, user_to_idx, item_to_idx)
+
+    # ===== Model: Popularity =====
     popularity = _popularity_scores(train_pairs, item_count=len(item_to_idx), transform=POPULARITY_TRANSFORM)
     print("[recommender.train] trained popularity baseline")
+
+    # ===== Model: Matrix Factorization (MF) =====
     mf_user, mf_item = _train_mf(
         train_pairs,
         user_count=len(user_to_idx),
@@ -180,6 +184,8 @@ def _train_candidate_models(
     print(
         f"[recommender.train] trained mf baseline (components={params.mf_components}, n_iter={params.mf_n_iter}, weighting={params.mf_weighting}, algorithm={MF_ALGORITHM})"
     )
+
+    # ===== Model: Two-Tower =====
     tt_user, tt_item = _train_two_tower(
         train,
         user_to_idx,
@@ -232,6 +238,7 @@ def _evaluate_and_select_model(
     """What: Evaluate all candidates and select best by validation Recall@K.
     Why: Freezes one selected model for downstream artifact writing and serving.
     """
+    # Evaluate each candidate model in MODEL_NAMES using shared metric logic.
     model_names = list(MODEL_NAMES)
     metrics_by_split = {
         split_name: [

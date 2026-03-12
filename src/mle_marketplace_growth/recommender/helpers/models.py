@@ -48,6 +48,7 @@ def _interaction_pairs(
     return np.asarray(pairs, dtype=np.int64)
 
 
+# ===== Model Family: Popularity =====
 def _popularity_scores(user_item_pairs: np.ndarray, item_count: int, transform: str = "linear") -> np.ndarray:
     """What: Compute normalized item popularity scores from (user_idx, item_idx) pairs.
     Why: Provides a strong baseline and fallback scoring signal.
@@ -67,6 +68,7 @@ def _popularity_scores(user_item_pairs: np.ndarray, item_count: int, transform: 
     return scores
 
 
+# ===== Model Family: Matrix Factorization (MF) =====
 def _train_mf(
     user_item_pairs: np.ndarray,
     user_count: int,
@@ -106,6 +108,7 @@ def _train_mf(
     return svd.fit_transform(matrix), svd.components_.T
 
 
+# ===== Model Family: Two-Tower =====
 def _train_two_tower(
     train: dict[str, set[str]],
     user_to_idx: dict[str, int],
