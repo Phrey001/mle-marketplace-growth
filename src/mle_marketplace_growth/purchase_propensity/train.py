@@ -16,6 +16,7 @@ from mle_marketplace_growth.purchase_propensity.constants import (
 )
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
     _build_train_metrics_payload,
+    _cycle_artifacts_root,
     _dump_model_artifact,
     _offline_eval_paths,
     _write_metrics_artifact,
@@ -79,9 +80,9 @@ def _policy_scores(
 
     # A) Expected-value policy: propensity * predicted conditional revenue.
     expected_value_scores = (propensity_scores * predicted_conditional_revenue).tolist()
-    # B) Random baseline policy: deterministic pseudo-random ranking per user/date.
+    # B) Random baseline policy: deterministic pseudo-random score per user/date for reproducible naive ranking.
     random_scores = [
-        1.0 - _stable_ratio(f"{user_id}|{as_of_date}|policy_random")
+        _stable_ratio(f"{user_id}|{as_of_date}|policy_random")
         for user_id, as_of_date in zip(df["user_id"], df["as_of_date"], strict=True)
     ]
     # C) RFM heuristic policy: weighted recency + frequency + monetary blend.
@@ -109,8 +110,8 @@ def run_training(
     cfg = load_yaml_defaults(str(config_path), "Engine config")
 
     panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
-    output_root = Path(str(cfg_required(cfg, "output_root")))
-    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    output_root = Path("data")
+    artifacts_dir = _cycle_artifacts_root(config_path)
     default_offline_paths = _offline_eval_paths(artifacts_dir)
     prediction_window_days = int(prediction_window_days) if prediction_window_days is not None else int(cfg_required(cfg, "prediction_window_days"))
     feature_lookback_days = int(feature_lookback_days) if feature_lookback_days is not None else int(cfg_required(cfg, "feature_lookback_days"))

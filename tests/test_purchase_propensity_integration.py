@@ -125,16 +125,16 @@ def _write_fixture_raw_csv(path: Path) -> None:
 
 class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
     def _run(self, command: list[str], env: dict[str, str]) -> None:
-        subprocess.run(command, check=True, env=env, cwd=Path(__file__).resolve().parents[1])
+        subprocess.run(command, check=True, env=env, cwd=self._cwd)
 
     def test_end_to_end_recommended_flow(self) -> None:
         # Arrange: temporary repo-like workspace with synthetic raw data.
         repo_root = Path(__file__).resolve().parents[1]
+        python_bin = repo_root / ".venv" / "bin" / "python"
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_root = Path(tmp_dir)
+            self._cwd = tmp_root
             input_csv = tmp_root / "raw.csv"
-            output_root = tmp_root / "data"
-            artifacts_root = tmp_root / "artifacts"
             shared_config_path = tmp_root / "shared.yaml"
             config_path = tmp_root / "config.yaml"
             _write_fixture_raw_csv(input_csv)
@@ -147,7 +147,6 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
                 "\n".join(
                     [
                         f"input_csv: \"{input_csv}\"",
-                        f"output_root: \"{output_root}\"",
                     ]
                 )
                 + "\n",
@@ -156,8 +155,6 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        f"output_root: \"{output_root}\"",
-                        f"artifacts_dir: \"{artifacts_root}\"",
                         "panel_end_date: \"2011-11-10\"",
                         "window_selection_mode: sensitivity",
                         "force_propensity_model: null",
@@ -174,7 +171,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             # Act: build shared layer, then run propensity pipeline.
             self._run(
                 [
-                    ".venv/bin/python",
+                    str(python_bin),
                     "-m",
                     "mle_marketplace_growth.feature_store.build_shared_silver",
                     "--shared-config",
@@ -184,7 +181,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             )
             self._run(
                 [
-                    ".venv/bin/python",
+                    str(python_bin),
                     "-m",
                     "mle_marketplace_growth.feature_store.build_gold_purchase_propensity",
                     "--config",
@@ -194,7 +191,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             )
             self._run(
                 [
-                    ".venv/bin/python",
+                    str(python_bin),
                     "-m",
                     "mle_marketplace_growth.purchase_propensity.run_pipeline",
                     "--config",
@@ -204,7 +201,7 @@ class PurchasePropensityPipelineIntegrationTest(unittest.TestCase):
             )
 
             # Assert: core train/eval/sensitivity artifacts are populated and coherent.
-            offline_eval = artifacts_root / "offline_eval"
+            offline_eval = tmp_root / "artifacts" / "purchase_propensity" / "config" / "offline_eval"
             train_metrics = json.loads((offline_eval / "train_metrics.json").read_text(encoding="utf-8"))
             self.assertIn(train_metrics["selected_model_name"], {"logistic_regression", "xgboost"})
             self.assertEqual(train_metrics["calibration_method"], "sigmoid")

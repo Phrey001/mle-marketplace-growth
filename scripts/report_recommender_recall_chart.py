@@ -1,4 +1,10 @@
-"""Generate recommender Recall@20 comparison chart for validation and test."""
+"""Generate the recommender Recall@20 comparison chart from the canonical run artifacts.
+
+Workflow Steps:
+1) Load the recommender runtime config to find the canonical artifact folder.
+2) Read validation/test retrieval metrics for the selected as-of date.
+3) Write one report chart PNG under `artifacts/recommender/report_assets/`.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +14,11 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from mle_marketplace_growth.recommender.helpers.config import load_recommender_runtime_config
+
 
 def _load_recall_at_20(path: Path) -> dict[str, float]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    rows = payload.get("rows", [])
+    rows = json.loads(path.read_text(encoding="utf-8")).get("rows", [])
     by_model = {row["model_name"]: row for row in rows}
     return {
         "popularity": float(by_model["popularity"]["metrics"]["Recall@20"]),
@@ -21,26 +28,13 @@ def _load_recall_at_20(path: Path) -> dict[str, float]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create recommender Recall@20 chart for report assets.")
-    parser.add_argument(
-        "--validation-json",
-        default="artifacts/recommender/validation_retrieval_metrics.json",
-        help="Validation retrieval metrics JSON",
-    )
-    parser.add_argument(
-        "--test-json",
-        default="artifacts/recommender/test_retrieval_metrics.json",
-        help="Test retrieval metrics JSON",
-    )
-    parser.add_argument(
-        "--output-png",
-        default="artifacts/recommender/report_assets/model_recall_at20_comparison.png",
-        help="Output chart PNG path",
-    )
+    parser = argparse.ArgumentParser(description="Create the recommender Recall@20 report chart.")
+    parser.add_argument("--config", required=True, help="Recommender YAML config")
     args = parser.parse_args()
 
-    validation = _load_recall_at_20(Path(args.validation_json))
-    test = _load_recall_at_20(Path(args.test_json))
+    runtime = load_recommender_runtime_config(args.config)
+    validation = _load_recall_at_20(runtime.artifacts_dir / "validation_retrieval_metrics.json")
+    test = _load_recall_at_20(runtime.artifacts_dir / "test_retrieval_metrics.json")
     values_by_model = {
         "popularity": [validation["popularity"], test["popularity"]],
         "mf": [validation["mf"], test["mf"]],
@@ -52,9 +46,9 @@ def main() -> None:
     x = [0, 1]
     width = 0.24
     fig, ax = plt.subplots(figsize=(8, 4.8))
-    for idx, model in enumerate(["popularity", "mf", "two_tower"]):
+    for idx, model_name in enumerate(["popularity", "mf", "two_tower"]):
         offsets = [point + (idx - 1) * width for point in x]
-        bars = ax.bar(offsets, values_by_model[model], width=width, label=labels[model], color=colors[model])
+        bars = ax.bar(offsets, values_by_model[model_name], width=width, label=labels[model_name], color=colors[model_name])
         for bar in bars:
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
@@ -73,7 +67,7 @@ def main() -> None:
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
 
-    output_path = Path(args.output_png)
+    output_path = Path("artifacts") / "recommender" / "report_assets" / "model_recall_at20_comparison.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=140)
     plt.close(fig)

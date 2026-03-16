@@ -1,8 +1,10 @@
 -- Purpose: Build canonical silver_transactions_line_items from raw_source.
+-- Why: Both engines depend on one cleaned shared transaction table with stable grain and typing.
 CREATE OR REPLACE TABLE silver_transactions_line_items AS
 WITH
 raw_deduplicated AS (
-  -- Select distinct raw rows at the source grain.
+  -- Remove exact duplicate raw rows before typing so later aggregation handles only
+  -- business duplicates that still share the same canonical silver grain.
   SELECT DISTINCT
     "Invoice",
     "StockCode",
@@ -15,7 +17,7 @@ raw_deduplicated AS (
   FROM raw_source
 ),
 typed_source AS (
-  -- Select typed and normalized raw columns.
+  -- Parse raw strings into typed columns and keep trimmed identifiers for later validation.
   SELECT
     TRIM(CAST("Invoice" AS VARCHAR)) AS invoice_id,
     TRIM(CAST("StockCode" AS VARCHAR)) AS item_id,
@@ -28,7 +30,7 @@ typed_source AS (
   FROM raw_deduplicated
 ),
 valid_source AS (
-  -- Select valid rows and normalize user_id formatting.
+  -- Keep rows that satisfy the shared silver contract and normalize user ids into one format.
   SELECT
     invoice_id,
     item_id,

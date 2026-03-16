@@ -76,7 +76,7 @@ Notes:
 | Cycle 2 mode | `window_selection_mode=fixed` to avoid reopening structural search |
 | Shared dependency | Engine-specific gold build requires prebuilt shared silver (`build_shared_silver`) |
 | Gold dependency | ML pipeline consumes prebuilt purchase-propensity gold snapshots from `build_gold_purchase_propensity` |
-| Artifact folder | Set explicitly in cycle YAML via `artifacts_dir` (e.g. `artifacts/purchase_propensity/cycle_initial`) |
+| Artifact folder | Derived from cycle config filename (e.g. `configs/purchase_propensity/cycle_initial.yaml` -> `artifacts/purchase_propensity/cycle_initial/`) |
 | Date validation | `panel_end_date` should be a monthly snapshot date (1st of month) and is validated against shared silver event-date bounds |
 | Artifact layout | Stage-2 outputs are grouped by purpose: `offline_eval/` (train/policy artifacts) and `report/` (validation summary + interpretation) |
 

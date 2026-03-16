@@ -1,0 +1,42 @@
+{
+  "passed": true,
+  "artifacts_dir": "artifacts/recommender/as_of=2011-11-30",
+  "checks": [
+    {
+      "check": "selected_model_present",
+      "description": "Selected model must be one of popularity/mf/two_tower.",
+      "passed": true,
+      "detail": "selected_model_name=mf"
+    },
+    {
+      "check": "baseline_rows_present",
+      "description": "Validation and test metrics should contain popularity, mf, and two_tower rows.",
+      "passed": true,
+      "detail": "validation_rows=3, test_rows=3"
+    },
+    {
+      "check": "metrics_in_bounds",
+      "description": "Recall/NDCG/HitRate metrics should stay in [0,1].",
+      "passed": true,
+      "detail": "all_metrics_checked"
+    },
+    {
+      "check": "topk_recommendations_non_empty",
+      "description": "Top-K recommendation output must have at least one row.",
+      "passed": true,
+      "detail": "row_count=85960"
+    },
+    {
+      "check": "embedding_index_model_matches_selection",
+      "description": "Embedding index selected model should match train selected model.",
+      "passed": true,
+      "detail": "index_selected=mf"
+    },
+    {
+      "check": "ann_index_artifacts_present",
+      "description": "ANN metadata and FAISS ANN index artifact must be present.",
+      "passed": true,
+      "detail": "ann_backend=faiss_hnsw_ip"
+    }
+  ]
+}

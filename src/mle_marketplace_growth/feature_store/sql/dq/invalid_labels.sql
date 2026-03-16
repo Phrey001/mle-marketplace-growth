@@ -1,4 +1,5 @@
 -- Purpose: Count gold_labels rows with invalid label_name/window_days pairing.
+-- Why: Enforces that each generated label name maps to the correct future horizon.
 -- Select count of invalid label rows.
 SELECT COUNT(*)
 FROM gold_labels

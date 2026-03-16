@@ -288,7 +288,7 @@ def _evaluate_and_select_model(
     )
 
 
-def run_train(config_path: str) -> None:
+def run_train(config_path: str, output_dir_override=None) -> None:
     """What: Train recommender candidates, select one model, and write artifacts.
     Why: Provides in-process training entrypoint reused by pipeline and CLI.
     """
@@ -298,7 +298,7 @@ def run_train(config_path: str) -> None:
     split_path = runtime.splits_path
     user_index_path = runtime.user_index_path
     item_index_path = runtime.item_index_path
-    output_dir = runtime.artifacts_dir
+    output_dir = output_dir_override if output_dir_override is not None else runtime.artifacts_dir
     train_params, top_ks = _load_train_params(cfg)
     # ===== Validate Inputs =====
     _validate_train_inputs(split_path, user_index_path, item_index_path, top_ks, train_params)

@@ -36,6 +36,13 @@ class ReportPaths:
     interpretation_path: Path
 
 
+def _cycle_artifacts_root(config_path: Path) -> Path:
+    """What: Return the fixed artifact root for one purchase-propensity cycle config.
+    Why: Cycle outputs follow a deterministic repo contract keyed by config filename.
+    """
+    return Path("artifacts") / "purchase_propensity" / config_path.stem
+
+
 def _offline_eval_paths(artifacts_dir: Path) -> OfflineEvalPaths:
     """Return standard offline-eval artifact paths under artifacts_dir/offline_eval."""
     root = artifacts_dir / "offline_eval"

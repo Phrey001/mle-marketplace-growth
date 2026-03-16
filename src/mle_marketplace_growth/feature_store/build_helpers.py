@@ -19,19 +19,20 @@ def copy_table_to_parquet(
     return int(row_count)
 
 
-def load_shared_silver_table(connection: duckdb.DuckDBPyConnection, shared_db_path: Path) -> None:
-    """Attach shared feature-store DB and copy canonical silver table into this session."""
-    if not shared_db_path.exists():
-        raise FileNotFoundError(f"Shared silver db not found: {shared_db_path}. Run feature_store.build_shared_silver first.")
-    quoted_path = str(shared_db_path).replace("'", "''")
-    connection.execute(f"ATTACH '{quoted_path}' AS shared_fs (READ_ONLY)")
+def load_shared_silver_table(connection: duckdb.DuckDBPyConnection, silver_path: Path) -> None:
+    """Load canonical silver parquet into the current DuckDB session as a temp table.
+    Why: Gold builders read the shared silver parquet directly, then keep downstream SQL
+    simple by exposing the standard local table name `silver_transactions_line_items`.
+    """
+    if not silver_path.exists():
+        raise FileNotFoundError(f"Shared silver parquet not found: {silver_path}. Run feature_store.build_shared_silver first.")
     connection.execute(
         """
         CREATE OR REPLACE TEMP TABLE silver_transactions_line_items AS
-        SELECT * FROM shared_fs.silver_transactions_line_items;
-        """
+        SELECT * FROM read_parquet(?);
+        """,
+        [str(silver_path)],
     )
-    connection.execute("DETACH shared_fs")
 
 
 def run_dq_check(connection: duckdb.DuckDBPyConnection, sql: str, error_message: str) -> None:

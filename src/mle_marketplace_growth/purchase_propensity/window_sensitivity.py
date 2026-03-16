@@ -18,6 +18,7 @@ from mle_marketplace_growth.purchase_propensity.constants import (
     SPEND_CAP_QUANTILE,
 )
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _cycle_artifacts_root,
     _write_window_sensitivity_artifact,
     _write_window_validation_dashboard,
 )
@@ -318,8 +319,8 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_yaml_defaults(args.config, "Engine config")
-    output_root = Path(str(cfg_required(cfg, "output_root")))
-    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    output_root = Path("data")
+    artifacts_dir = _cycle_artifacts_root(Path(args.config))
     panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
     feature_paths = [
         output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset" / f"as_of_date={snapshot.isoformat()}" / "propensity_train_dataset.parquet"

@@ -43,7 +43,8 @@ def _load_split_rows(path: Path) -> pd.DataFrame:
 
 def _validate_split_chronology(rows_df: pd.DataFrame) -> None:
     """What: Enforce per-user train < validation < test temporal ordering.
-    Why: Prevents temporal leakage in recommender offline evaluation.
+    Why: Prevents temporal leakage after the feature store assigns invoice-level
+    chronological splits and all line items inherit that split.
     """
     normalized_df = rows_df.copy()
     normalized_df["split_norm"] = normalized_df["split"].astype(str).str.strip().str.lower().replace({"validation": "val"})
@@ -74,7 +75,8 @@ def _validate_split_chronology(rows_df: pd.DataFrame) -> None:
 
 def _build_interactions(rows_df: pd.DataFrame) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
     """What: Convert split rows into user->item interaction maps by split.
-    Why: Provides compact structures for model training and metric evaluation.
+    Why: Provides compact structures for model training and metric evaluation
+    after invoice-level split decisions have already been assigned upstream.
     """
     normalized_df = rows_df[["user_id", "item_id", "split"]].copy()
     normalized_df["split_norm"] = normalized_df["split"].astype(str).str.strip().str.lower().replace({"validation": "val"})

@@ -10,6 +10,7 @@ import pandas as pd
 
 from mle_marketplace_growth.helpers import cfg_required, load_yaml_defaults
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _cycle_artifacts_root,
     _offline_eval_paths,
     _serving_prediction_scores_path,
     _write_batch_prediction_scores_artifact,
@@ -29,8 +30,8 @@ def main() -> None:
 
     # ===== Load Config =====
     cfg = load_yaml_defaults(args.config, "Engine config")
-    output_root = Path(str(cfg_required(cfg, "output_root")))
-    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    output_root = Path("data")
+    artifacts_dir = _cycle_artifacts_root(Path(args.config))
     panel_end_date = date.fromisoformat(str(cfg_required(cfg, "panel_end_date")))
     panel_end_iso = panel_end_date.isoformat()
     default_input_path = (

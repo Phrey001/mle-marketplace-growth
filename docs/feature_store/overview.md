@@ -4,7 +4,7 @@ Purpose: produce reproducible point-in-time datasets for:
 - recommender training/evaluation
 - purchase propensity training and offline policy evaluation
 
-Flow: Bronze (`data/bronze/online_retail_ii/raw.csv`) -> Silver (`data/silver/transactions_line_items/transactions_line_items.parquet`, canonicalized in `data/_tmp/feature_store.duckdb`) -> Gold (`data/gold/feature_store/recommender/...` and `data/gold/feature_store/purchase_propensity/...`).
+Flow: Bronze (`data/bronze/online_retail_ii/raw.csv`) -> Silver (`data/silver/transactions_line_items/transactions_line_items.parquet`) -> Gold (`data/gold/feature_store/recommender/...` and `data/gold/feature_store/purchase_propensity/...`).
 
 Silver canonicalization behavior:
 - exact raw duplicates are removed first
@@ -16,15 +16,22 @@ Build commands (separable by layer/engine):
 ```bash
 PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_shared_silver --shared-config configs/shared.yaml
 PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_purchase_propensity --config configs/purchase_propensity/cycle_initial.yaml
-PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml --shared-config configs/shared.yaml
+PYTHONPATH=src python -m mle_marketplace_growth.feature_store.build_gold_recommender --config configs/recommender/default.yaml
 ```
 
 Each command runs transformations, executes DQ checks, and writes a run manifest for its scope.
+Purchase propensity writes one cycle-level manifest that summarizes all snapshot partitions for the selected `panel_end_date`.
 
 Purchase propensity gold outputs now materialize:
 - labels for `30d`, `60d`, `90d` horizons in `gold_labels`
 - feature rollups for `30d`, `60d`, `90d`, `120d` windows in `gold_user_features_asof`
 - a training dataset that includes the above labels/features in one row-per-user snapshot
+
+Recommender gold outputs now materialize:
+- `gold_interaction_events` as the positive interaction event layer
+- `gold_user_item_splits` as the fixed train/val/test split layer
+- `gold_recommender_user_index` as stable user row indices for matrix/embedding models
+- `gold_recommender_item_index` as stable train-item row indices for matrix/embedding models
 
 Build entrypoints:
 
@@ -38,21 +45,26 @@ Common arguments (shared + recommender builders):
 
 | Argument | Default | Purpose |
 | --- | --- | --- |
-| `--shared-config PATH` | optional | Shared config defaults (for example `output_root`). |
+| `--shared-config PATH` | required (`build_shared_silver` only) | Shared input config (for example `input_csv`). |
 | `--config PATH` | required (gold scripts) | Engine-specific config defaults. |
-| `--output-root PATH` | from config (`data`) | Root output directory for materialized artifacts. |
-| `--recommender-min-event-date YYYY-MM-DD` | unset | Optional lower bound event_date filter for recommender outputs. |
-| `--recommender-max-event-date YYYY-MM-DD` | unset | Optional upper bound event_date filter for recommender outputs. |
+
+Recommender builder reads event-date bounds from engine config:
+- `recommender_min_event_date`
+- `recommender_max_event_date`
 
 Purchase propensity builder uses config-only inputs:
 
 | Argument | Default | Purpose |
 | --- | --- | --- |
-| `--config PATH` | required | Purchase-propensity engine config (includes `panel_end_date`, `output_root`). |
+| `--config PATH` | required | Purchase-propensity engine config (includes `panel_end_date`). |
+
+Feature-store output root is fixed in this repo:
+- materialized outputs always write under `data/`
+- `output_root` is no longer a user-facing config or CLI knob
 
 Run manifest captures build lineage (inputs, params, quality, artifacts) for reproducibility, debugging, and downstream experiment tracking.
 
-Note: recommender split strategy is fixed in this repo (`split_version='time_rank_v1'`), so it is no longer exposed as a config/CLI knob.
+Note: recommender split strategy is fixed in this repo, so it is no longer exposed as a config/CLI knob.
 
 Why `panel_end_date` matters:
 

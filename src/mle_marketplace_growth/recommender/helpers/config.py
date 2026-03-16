@@ -32,19 +32,33 @@ class RecommenderArtifactPaths:
     output_interpretation: Path
 
 
+def _recommender_gold_root() -> Path:
+    """What: Return the fixed recommender gold feature-store root.
+    Why: Recommender ML reads a stable upstream contract under data/gold/feature_store/recommender.
+    """
+    return Path("data") / "gold" / "feature_store" / "recommender"
+
+
+def _recommender_runtime_root(as_of_date: str) -> Path:
+    """What: Return the fixed recommender artifact root for one as-of date.
+    Why: Keeps run outputs in one deterministic folder without YAML path knobs.
+    """
+    return Path("artifacts") / "recommender" / f"as_of={as_of_date}"
+
+
 def load_recommender_runtime_config(config_path: str) -> RecommenderRuntimeConfig:
     """What: Load runtime config fields used across recommender scripts.
     Why: Centralizes required key parsing for train/predict/pipeline consistency.
     """
     cfg = load_yaml_defaults(config_path, "Recommender config")
-    artifacts_root = Path(str(cfg_required(cfg, "artifacts_dir")))
     as_of_date = str(cfg_required(cfg, "recommender_max_event_date"))
+    gold_root = _recommender_gold_root()
     return RecommenderRuntimeConfig(
         cfg=cfg,
-        splits_path=Path(str(cfg_required(cfg, "splits_path"))),
-        user_index_path=Path(str(cfg_required(cfg, "user_index_path"))),
-        item_index_path=Path(str(cfg_required(cfg, "item_index_path"))),
-        artifacts_dir=artifacts_root / f"as_of={as_of_date}",
+        splits_path=gold_root / "user_item_splits" / "user_item_splits.parquet",
+        user_index_path=gold_root / "user_index" / "user_index.parquet",
+        item_index_path=gold_root / "item_index" / "item_index.parquet",
+        artifacts_dir=_recommender_runtime_root(as_of_date),
         top_k=int(cfg_required(cfg, "top_k")),
     )
 

@@ -9,9 +9,9 @@
 
 ## Policy Comparison (Budget-Constrained Holdout Outcomes)
 - ML expected-value revenue/targeted user: 1432.0304
-- Random baseline revenue/targeted user: 505.7851
+- Random baseline revenue/targeted user: 471.5252
 - RFM baseline revenue/targeted user: 1444.3692
-- ML vs Random delta: 926.2454
+- ML vs Random delta: 960.5053
 - ML vs RFM delta: -12.3388
 - Validation policy rows: 3
 - Test policy rows: 3

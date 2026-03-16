@@ -1,7 +1,9 @@
 -- Purpose: Count users with train/val/test chronology violations in gold_user_item_splits.
+-- Why: Recommender offline evaluation must keep older interactions in train and newer ones in val/test.
 WITH
 split_times AS (
-  -- Select per-user timestamps for each split.
+  -- Collapse each user's split timestamps so we can compare the latest train event
+  -- against the earliest val/test events for chronology validation.
   SELECT
     user_id,
     MAX(CASE WHEN split = 'train' THEN TRY_STRPTIME(event_ts, '%Y-%m-%d %H:%M:%S') END) AS max_train_ts,
@@ -10,7 +12,7 @@ split_times AS (
   FROM gold_user_item_splits
   GROUP BY user_id
 )
--- Select count of users with chronology violations.
+-- Count users where the configured chronological split contract is broken.
 SELECT COUNT(*)
 FROM split_times
 WHERE (max_train_ts IS NOT NULL AND min_val_ts IS NOT NULL AND max_train_ts > min_val_ts)

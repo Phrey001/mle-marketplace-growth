@@ -11,6 +11,7 @@ Physical models live in `src/mle_marketplace_growth/feature_store/sql/`; outputs
 
 Layer: `Silver`  
 Domain: `Shared`  
+Purpose: canonical cleaned transaction line items shared by both engines.  
 
 Grain: one row per transaction line item.
 Note: exact raw duplicate rows are removed before typing/filters.
@@ -34,8 +35,10 @@ Note: exact raw duplicate rows are removed before typing/filters.
 
 Layer: `Gold`  
 Domain: `Recommender`  
+Purpose: positive user-item interaction events for recommender training and split derivation.  
 
 Grain: one row per positive user-item interaction event.
+Note: current recommender ML uses binary user-item interactions only; `weight` is retained for future extensions and is not used as a training weight today.
 
 | Column | PK | Type | Nullable | Description | Source / Rule | Example |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -44,7 +47,7 @@ Grain: one row per positive user-item interaction event.
 | `invoice_id` | Yes | string | No | Invoice identifier | from silver | `489434` |
 | `event_ts` | Yes | string (timestamp format) | No | Event timestamp in `%Y-%m-%d %H:%M:%S` | formatted from silver `event_ts` | `2009-12-01 07:45:00` |
 | `event_date` | No | string (date format) | No | Event date in `%Y-%m-%d` | cast from silver `event_date` | `2009-12-01` |
-| `weight` | No | int | No | Interaction weight | silver `quantity`; filtered `> 0` | `24` |
+| `weight` | No | int | No | Retained interaction-strength field | silver `quantity`; filtered `> 0`; not used by current recommender ML training path | `24` |
 
 ---
 
@@ -52,8 +55,10 @@ Grain: one row per positive user-item interaction event.
 
 Layer: `Gold`  
 Domain: `Recommender`  
+Purpose: train/validation/test split assignments for recommender offline evaluation.  
 
 Grain: one row per interaction event with assigned split.
+Note: split rows keep only the fields needed for chronological evaluation and downstream indexing; retained interaction `weight` stays only in `gold_interaction_events`.
 
 | Column | PK | Type | Nullable | Description | Source / Rule | Example |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -62,9 +67,37 @@ Grain: one row per interaction event with assigned split.
 | `invoice_id` | Yes | string | No | Invoice identifier | from `gold_interaction_events` | `489434` |
 | `event_ts` | Yes | string (timestamp format) | No | Event timestamp | from `gold_interaction_events` | `2009-12-01 07:45:00` |
 | `event_date` | No | string (date format) | No | Event date | from `gold_interaction_events` | `2009-12-01` |
-| `weight` | No | int | No | Interaction weight | from `gold_interaction_events` | `24` |
-| `split_version` | Yes | string | No | Fixed split strategy/version identifier | hardcoded in SQL | `time_rank_v1` |
-| `split` | Yes | enum(`train`,`val`,`test`) | No | Time-based split assignment per user | latest=`test`, second-latest=`val`, else=`train` | `train` |
+| `split` | Yes | enum(`train`,`val`,`test`) | No | Time-based split assignment per user invoice moment | latest invoice moment=`test`, second-latest=`val`, else=`train` | `train` |
+
+---
+
+## `gold_recommender_user_index`
+
+Layer: `Gold`  
+Domain: `Recommender`  
+Purpose: stable user row indices for recommender matrix and embedding models.  
+
+Grain: one row per recommender user id.
+
+| Column | PK | Type | Nullable | Description | Source / Rule | Example |
+| --- | --- | --- | --- | --- | --- | --- |
+| `user_id` | Yes | string | No | User identifier | distinct from `gold_user_item_splits` | `13085` |
+| `user_idx` | No | int | No | Stable zero-based user row index for recommender matrices | `ROW_NUMBER() OVER (ORDER BY user_id) - 1` | `0` |
+
+---
+
+## `gold_recommender_item_index`
+
+Layer: `Gold`  
+Domain: `Recommender`  
+Purpose: stable train-item row indices for recommender matrix and embedding models.  
+
+Grain: one row per recommender train-split item id.
+
+| Column | PK | Type | Nullable | Description | Source / Rule | Example |
+| --- | --- | --- | --- | --- | --- | --- |
+| `item_id` | Yes | string | No | Item identifier | distinct train-split items from `gold_user_item_splits` | `21232` |
+| `item_idx` | No | int | No | Stable zero-based item row index for recommender matrices | `ROW_NUMBER() OVER (ORDER BY item_id) - 1` | `0` |
 
 ---
 
@@ -72,6 +105,7 @@ Grain: one row per interaction event with assigned split.
 
 Layer: `Gold`  
 Domain: `Purchase Propensity`  
+Purpose: point-in-time user feature snapshots for propensity training and scoring.  
 
 Grain: one row per user per as-of date.
 
@@ -99,6 +133,7 @@ Grain: one row per user per as-of date.
 
 Layer: `Gold`  
 Domain: `Purchase Propensity`  
+Purpose: future-window purchase and revenue outcomes per user snapshot.  
 
 Grain: one row per (`user_id`, `as_of_date`, `label_name`).
 
@@ -118,6 +153,7 @@ Note: each (`user_id`, `as_of_date`, `window_days`) has multiple rows (one per l
 
 Layer: `Gold`  
 Domain: `Purchase Propensity`  
+Purpose: model-ready joined feature-plus-label dataset for propensity ML runs.  
 
 Grain: one row per (`user_id`, `as_of_date`) for propensity training/evaluation.
 Note: dataset includes 30/60/90 labels and multi-lookback features; current main training target remains `label_purchase_30d`.

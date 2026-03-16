@@ -68,19 +68,16 @@ def main() -> None:
 
     cfg = load_yaml_defaults(args.shared_config, "Shared config")
     input_csv_value = str(cfg.get("input_csv", "data/bronze/online_retail_ii/raw.csv"))
-    output_root_value = str(cfg.get("output_root", "data"))
 
     input_csv = Path(input_csv_value)
     if not input_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
-    output_root = Path(output_root_value)
+    output_root = Path("data")
     silver_path = output_root / "silver" / "transactions_line_items" / "transactions_line_items.parquet"
-    shared_db_path = output_root / "_tmp" / "feature_store.duckdb"
     manifest_path = output_root / "silver" / "_meta" / "run_manifest.json"
     sql = load_sql_assets(Path(__file__).resolve().parent / "sql")
 
-    shared_db_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = duckdb.connect(database=str(shared_db_path))
+    connection = duckdb.connect(database=":memory:")
     quality = bootstrap_silver(connection, input_csv=input_csv, sql=sql)
     row_count = copy_table_to_parquet(connection, "silver_transactions_line_items", silver_path, sql["count_rows"])
     print(f"Wrote silver table: {silver_path} ({row_count} rows)")
@@ -98,7 +95,6 @@ def main() -> None:
         },
         "artifacts": {
             "silver_transactions_line_items": {"path": str(silver_path), "rows": row_count},
-            "shared_db": {"path": str(shared_db_path)},
         },
     }
     write_json(manifest_path, manifest)

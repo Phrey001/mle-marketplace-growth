@@ -1,4 +1,5 @@
 -- Purpose: Count duplicate (invoice_id, item_id, event_ts) rows in silver_transactions_line_items.
+-- Why: Canonical silver must stay unique at its declared grain before gold builds consume it.
 -- Select count of duplicate silver grain rows.
 SELECT COUNT(*)
 FROM (

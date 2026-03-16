@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,11 +11,8 @@ from mle_marketplace_growth.purchase_propensity import run_pipeline
 class RunPipelineArgValidationTest(unittest.TestCase):
     PANEL_END_DATE = "2011-11-09"
 
-    def _base_required_config(self, output_root: Path | None = None) -> str:
-        root = output_root or Path("data")
+    def _base_required_config(self) -> str:
         return (
-            f"output_root: {root}\n"
-            "artifacts_dir: artifacts/purchase_propensity/test_cycle\n"
             "panel_end_date: '2011-11-09'\n"
             "window_selection_mode: fixed\n"
             "force_propensity_model: logistic_regression\n"
@@ -93,21 +91,23 @@ class RunPipelineArgValidationTest(unittest.TestCase):
             output_root = tmp_root / "data"
             gold_root = output_root / "gold" / "feature_store" / "purchase_propensity" / "propensity_train_dataset"
             config_path = tmp_root / "pipeline_config.yaml"
-            config_path.write_text(
-                self._base_required_config(output_root=output_root),
-                encoding="utf-8",
-            )
+            config_path.write_text(self._base_required_config(), encoding="utf-8")
             for as_of_date in [snapshot.isoformat() for snapshot in generate_snapshot_dates(run_pipeline.date.fromisoformat(self.PANEL_END_DATE))]:
                 dataset_path = gold_root / f"as_of_date={as_of_date}" / "propensity_train_dataset.parquet"
                 dataset_path.parent.mkdir(parents=True, exist_ok=True)
                 dataset_path.touch()
 
-            with patch("sys.argv", ["run_pipeline.py", "--config", str(config_path)]):
-                with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_training") as mock_train:
-                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_policy_budget_evaluation") as mock_policy_eval:
-                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
-                            with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
-                                run_pipeline.main()
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(tmp_root)
+                with patch("sys.argv", ["run_pipeline.py", "--config", str(config_path)]):
+                    with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_training") as mock_train:
+                        with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_policy_budget_evaluation") as mock_policy_eval:
+                            with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.run_validation", return_value=(True, {"checks": []})):
+                                with patch("mle_marketplace_growth.purchase_propensity.run_pipeline.write_interpretation"):
+                                    run_pipeline.main()
+            finally:
+                os.chdir(previous_cwd)
             self.assertTrue(mock_train.called)
             self.assertEqual(mock_policy_eval.call_count, 2)
 

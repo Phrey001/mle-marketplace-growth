@@ -13,6 +13,17 @@ from mle_marketplace_growth.recommender.helpers.models import _train_two_tower
 
 
 class RecommenderMinimalTests(unittest.TestCase):
+    USER_ITEM_SPLITS_SQL = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "mle_marketplace_growth"
+        / "feature_store"
+        / "sql"
+        / "gold"
+        / "recommender"
+        / "user_item_splits.sql"
+    )
+
     def _write_rows(self, rows: list[dict]) -> Path:
         temp_dir = Path(tempfile.mkdtemp())
         csv_path = temp_dir / "splits.csv"
@@ -28,6 +39,43 @@ class RecommenderMinimalTests(unittest.TestCase):
         finally:
             connection.close()
         return path
+
+    def test_invoice_level_split_keeps_same_invoice_items_together(self) -> None:
+        sql = self.USER_ITEM_SPLITS_SQL.read_text(encoding="utf-8")
+        connection = duckdb.connect(database=":memory:")
+        try:
+            connection.execute(
+                """
+                CREATE OR REPLACE TABLE gold_interaction_events AS
+                SELECT * FROM (
+                  VALUES
+                    ('u1', 'i1', 'inv_old', '2024-01-01 10:00:00', '2024-01-01', 1),
+                    ('u1', 'i2', 'inv_mid', '2024-01-02 10:00:00', '2024-01-02', 1),
+                    ('u1', 'i3', 'inv_new', '2024-01-03 10:00:00', '2024-01-03', 1),
+                    ('u1', 'i4', 'inv_new', '2024-01-03 10:00:00', '2024-01-03', 1)
+                ) AS t(user_id, item_id, invoice_id, event_ts, event_date, weight)
+                """
+            )
+            connection.execute(sql)
+            rows = connection.execute(
+                """
+                SELECT invoice_id, item_id, split
+                FROM gold_user_item_splits
+                ORDER BY event_ts, item_id
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        self.assertEqual(
+            rows,
+            [
+                ("inv_old", "i1", "train"),
+                ("inv_mid", "i2", "val"),
+                ("inv_new", "i3", "test"),
+                ("inv_new", "i4", "test"),
+            ],
+        )
 
     def test_window_overlap_test_split_chronology_violation(self) -> None:
         rows = [

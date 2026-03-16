@@ -27,9 +27,9 @@
       "policy": "random_baseline",
       "targeted_users": 1000,
       "budget_spend": 5000.0,
-      "actual_purchase_rate": 0.414,
-      "actual_revenue_total": 505785.05,
-      "actual_revenue_per_targeted_user": 505.78505
+      "actual_purchase_rate": 0.439,
+      "actual_revenue_total": 471525.152,
+      "actual_revenue_per_targeted_user": 471.525152
     },
     {
       "policy": "rfm_heuristic",
@@ -41,7 +41,7 @@
     }
   ],
   "interpretation_kpis": {
-    "ml_vs_random_revenue_per_user_delta": 926.245362,
+    "ml_vs_random_revenue_per_user_delta": 960.50526,
     "ml_vs_rfm_revenue_per_user_delta": -12.33881
   }
 }

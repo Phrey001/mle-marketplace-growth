@@ -17,7 +17,7 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 
 | Area | Contract |
 |---|---|
-| Split mode | User-level chronological holdout: train=all but latest two, val=second-latest, test=latest |
+| Split mode | User-level chronological holdout at invoice-moment grain: train=older invoice moments, val=second-latest invoice moment, test=latest invoice moment |
 | Eligibility | Users with fewer than 3 interactions are excluded from ranking evaluation |
 | Candidate universe | Retrieval candidates are from train item universe |
 | Models compared | `popularity`, `mf`, `two_tower` |
@@ -29,6 +29,7 @@ Datetime ownership/bounds:
 - Shared silver data availability is defined by `configs/shared.yaml`.
 - Engine datetime is owned by recommender config (`recommender_min_event_date`, `recommender_max_event_date`).
 - Engine datetime may be narrower than shared bounds, but must not exceed shared silver event-date bounds (fail-fast on violation).
+- Recommender feature store keeps only the latest canonical build (no experiment tracking); reruns overwrite prior outputs.
 
 ## Pipeline Map
 
@@ -49,6 +50,15 @@ Datetime ownership/bounds:
 | Two-tower scoring | L2-normalized dot product (cosine-style); temperature applied in training logits |
 | Primary metric | `Recall@20` |
 | Guardrails | `NDCG@K`, `HitRate@K` |
+
+Interaction signal:
+- Models use binary user-item interactions; each unique `(user, item)` pair is counted once.
+- This is the standard implicit-feedback baseline used in many recommender systems.
+- Current training/evaluation does not use repeated-count or quantity weighting.
+- The feature-store gold tables still retain purchase quantity (`weight`) for potential future extensions that are out of scope for this repo:
+  - count-weighted interactions
+  - log-scaled interaction strength
+  - revenue-aware recommendation
 
 ## Artifact Contract
 

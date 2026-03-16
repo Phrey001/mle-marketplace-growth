@@ -12,7 +12,11 @@ from mle_marketplace_growth.purchase_propensity.constants import (
     ALLOWED_FEATURE_LOOKBACK_WINDOWS,
     ALLOWED_PREDICTION_WINDOWS,
 )
-from mle_marketplace_growth.purchase_propensity.helpers.artifacts import _offline_eval_paths, _report_paths
+from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
+    _cycle_artifacts_root,
+    _offline_eval_paths,
+    _report_paths,
+)
 from mle_marketplace_growth.purchase_propensity.policy_budget_evaluation import run_policy_budget_evaluation
 from mle_marketplace_growth.purchase_propensity.train import run_training
 from mle_marketplace_growth.purchase_propensity.validate_artifact_outputs import run_validation, write_interpretation
@@ -37,14 +41,14 @@ def main() -> None:
     # - window_selection_mode toggles sensitivity vs fixed path.
     # - force_propensity_model is required only in fixed mode; sensitivity mode derives it from window_sensitivity output.
     panel_end_date_raw = str(cfg_required(cfg, "panel_end_date"))
-    output_root = Path(str(cfg_required(cfg, "output_root")))
     prediction_window_days = int(cfg_required(cfg, "prediction_window_days"))  # allowed values: 30/60/90
     feature_lookback_days = int(cfg_required(cfg, "feature_lookback_days"))  # allowed values: 60/90/120
     window_selection_mode = str(cfg_required(cfg, "window_selection_mode"))  # allowed values: sensitivity|fixed
     force_propensity_model = cfg.get("force_propensity_model", None)
     budget = float(cfg_required(cfg, "budget"))
     cost_per_user = float(cfg_required(cfg, "cost_per_user"))
-    artifacts_dir = Path(str(cfg_required(cfg, "artifacts_dir")))
+    output_root = Path("data")
+    artifacts_dir = _cycle_artifacts_root(Path(args.config))
     offline_paths = _offline_eval_paths(artifacts_dir)
     report_paths = _report_paths(artifacts_dir)
 

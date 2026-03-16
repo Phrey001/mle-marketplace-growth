@@ -1,74 +1,73 @@
-"""Run a minimal fixed-grid recommender hyperparameter sweep.
+"""Run a minimal fixed-grid two-tower recommender tuning sweep.
 
-Execution order:
-1) run `trial_default` from the provided recommender YAML config
-2) run compact two-tower-focused grid variants for comparison
+Workflow Steps:
+1) Load the base recommender YAML config.
+2) Run one baseline trial using the YAML values exactly as provided.
+3) Run additional trials by applying fixed two-tower sweep overrides on top of those YAML defaults.
+3) Write one summary plus one compact folder per trial.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import yaml
 
+from mle_marketplace_growth.helpers import cfg_required
+from mle_marketplace_growth.recommender.train import run_train
 
-def _run_train(
-    trial_config_path: Path,
-    output_dir: Path,
-) -> None:
-    cmd = [
-        sys.executable,
-        "-m",
-        "mle_marketplace_growth.recommender.train",
-        "--config",
-        str(trial_config_path),
-        "--output-dir",
-        str(output_dir),
-    ]
-    print("Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+# Fixed two-tower override sets applied on top of the base YAML defaults.
+TWO_TOWER_SWEEP_OVERRIDES = [
+    {"temperature": 0.5},
+    {"temperature": 1.0},
+    {"negative_samples": 16},
+    {"batch_size": 2048},
+    {"early_stop_tolerance": 5e-4},
+    {"temperature": 0.5, "negative_samples": 16},
+    {"temperature": 0.5, "batch_size": 2048},
+    {"temperature": 0.5, "negative_samples": 16, "batch_size": 2048, "early_stop_tolerance": 5e-4},
+]
 
 
 def _recall_at_20(metrics_path: Path, model_name: str) -> float:
     rows = json.loads(metrics_path.read_text(encoding="utf-8"))["rows"]
-    row = next((r for r in rows if r["model_name"] == model_name), None)
+    row = next((result for result in rows if result["model_name"] == model_name), None)
     return float(row["metrics"].get("Recall@20", 0.0)) if row else 0.0
 
 
 def _trial_result(output_dir: Path, trial_name: str, config: dict[str, str | int | float]) -> dict:
     train_metrics = json.loads((output_dir / "train_metrics.json").read_text(encoding="utf-8"))
     selected_model = str(train_metrics["selected_model_name"])
-    val_path, test_path = output_dir / "validation_retrieval_metrics.json", output_dir / "test_retrieval_metrics.json"
+    validation_metrics_path = output_dir / "validation_retrieval_metrics.json"
+    test_metrics_path = output_dir / "test_retrieval_metrics.json"
     return {
         "trial_name": trial_name,
         "config": config,
         "selected_model_name": selected_model,
-        "validation_recall_at_20": _recall_at_20(val_path, selected_model),
-        "test_recall_at_20": _recall_at_20(test_path, selected_model),
-        "two_tower_validation_recall_at_20": _recall_at_20(val_path, "two_tower"),
-        "two_tower_test_recall_at_20": _recall_at_20(test_path, "two_tower"),
+        "validation_recall_at_20": _recall_at_20(validation_metrics_path, selected_model),
+        "test_recall_at_20": _recall_at_20(test_metrics_path, selected_model),
+        "two_tower_validation_recall_at_20": _recall_at_20(validation_metrics_path, "two_tower"),
+        "two_tower_test_recall_at_20": _recall_at_20(test_metrics_path, "two_tower"),
     }
 
 
+def _remove_tuning_bloat(output_dir: Path) -> None:
+    """What: Remove per-trial artifacts not needed for tuning review.
+    Why: Keeps the tuning output contract focused on config plus validation/test evidence.
+    """
+    for artifact_name in ["model_bundle.pkl", "train_metrics.json"]:
+        artifact_path = output_dir / artifact_name
+        if artifact_path.exists():
+            artifact_path.unlink()
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Minimal recommender hyperparameter tuning sweep.")
-    parser.add_argument("--config", default="configs/recommender/default.yaml", help="Base recommender YAML config")
-    parser.add_argument("--splits-path", default="data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet")
-    parser.add_argument("--user-index-path", default="data/gold/feature_store/recommender/user_index/user_index.parquet")
-    parser.add_argument("--item-index-path", default="data/gold/feature_store/recommender/item_index/item_index.parquet")
-    parser.add_argument("--output-root", default="artifacts/recommender/tuning")
-    parser.add_argument("--top-ks", default="10,20")
+    parser = argparse.ArgumentParser(description="Minimal fixed-grid two-tower recommender tuning sweep.")
+    parser.add_argument("--config", required=True, help="Base recommender YAML config")
     args = parser.parse_args()
 
-    splits_path = Path(args.splits_path)
-    user_index_path = Path(args.user_index_path)
-    item_index_path = Path(args.item_index_path)
-    output_root = Path(args.output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
     config_path = Path(args.config)
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -76,79 +75,58 @@ def main() -> None:
     if not isinstance(config_payload, dict):
         raise ValueError("Config file must contain a key-value object")
 
+    output_root = Path("artifacts") / "recommender" / "tuning"
+    output_root.mkdir(parents=True, exist_ok=True)
+    top_ks = str(cfg_required(config_payload, "top_ks"))
     default_cfg = {
-        "embedding_dim": int(config_payload.get("embedding_dim", 64)),
-        "epochs": int(config_payload.get("epochs", 12)),
-        "learning_rate": float(config_payload.get("learning_rate", 0.003)),
-        "negative_samples": int(config_payload.get("negative_samples", 8)),
-        "batch_size": int(config_payload.get("batch_size", 4096)),
-        "l2_reg": float(config_payload.get("l2_reg", 1e-4)),
-        "max_grad_norm": float(config_payload.get("max_grad_norm", 1.0)),
-        "early_stop_rounds": int(config_payload.get("early_stop_rounds", 4)),
-        "early_stop_k": int(config_payload.get("early_stop_k", 20)),
-        "early_stop_tolerance": float(config_payload.get("early_stop_tolerance", 1e-4)),
-        "temperature": float(config_payload.get("temperature", 1.0)),
-        "tower_hidden_dim": int(config_payload.get("tower_hidden_dim", 0)),
-        "tower_dropout": float(config_payload.get("tower_dropout", 0.0)),
-        "mf_components": int(config_payload.get("mf_components", 64)),
-        "mf_n_iter": int(config_payload.get("mf_n_iter", 15)),
-        "mf_weighting": str(config_payload.get("mf_weighting", "tfidf")),
+        "embedding_dim": int(cfg_required(config_payload, "embedding_dim")),
+        "epochs": int(cfg_required(config_payload, "epochs")),
+        "learning_rate": float(cfg_required(config_payload, "learning_rate")),
+        "negative_samples": int(cfg_required(config_payload, "negative_samples")),
+        "batch_size": int(cfg_required(config_payload, "batch_size")),
+        "l2_reg": float(cfg_required(config_payload, "l2_reg")),
+        "max_grad_norm": float(cfg_required(config_payload, "max_grad_norm")),
+        "early_stop_rounds": int(cfg_required(config_payload, "early_stop_rounds")),
+        "early_stop_k": int(cfg_required(config_payload, "early_stop_k")),
+        "early_stop_tolerance": float(cfg_required(config_payload, "early_stop_tolerance")),
+        "temperature": float(cfg_required(config_payload, "temperature")),
+        "tower_hidden_dim": int(cfg_required(config_payload, "tower_hidden_dim")),
+        "tower_dropout": float(cfg_required(config_payload, "tower_dropout")),
+        "mf_components": int(cfg_required(config_payload, "mf_components")),
+        "mf_n_iter": int(cfg_required(config_payload, "mf_n_iter")),
+        "mf_weighting": str(cfg_required(config_payload, "mf_weighting")),
     }
-    # Compact local sweep around current defaults (keeps runtime practical).
-    small_grid = [
-        {**default_cfg, "temperature": 0.5},
-        {**default_cfg, "temperature": 1.0},
-        {**default_cfg, "negative_samples": 16},
-        {**default_cfg, "batch_size": 2048},
-        {**default_cfg, "early_stop_tolerance": 5e-4},
-        {**default_cfg, "temperature": 0.5, "negative_samples": 16},
-        {**default_cfg, "temperature": 0.5, "batch_size": 2048},
-        {**default_cfg, "temperature": 0.5, "negative_samples": 16, "batch_size": 2048, "early_stop_tolerance": 5e-4},
-    ]
+    # Each sweep trial starts from the YAML defaults, then replaces only the listed two-tower knobs below.
+    small_grid = [{**default_cfg, **overrides} for overrides in TWO_TOWER_SWEEP_OVERRIDES]
 
     results: list[dict] = []
-    # Baseline trial uses current YAML defaults so tuning is comparable to main pipeline settings.
-    trial_dir = output_root / "trial_default"
-    trial_config = {
-        **config_payload,
-        **default_cfg,
-        "splits_path": str(splits_path),
-        "user_index_path": str(user_index_path),
-        "item_index_path": str(item_index_path),
-        "top_ks": args.top_ks,
-    }
-    trial_config_path = trial_dir / "trial_config.yaml"
-    trial_dir.mkdir(parents=True, exist_ok=True)
-    trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
-    _run_train(trial_config_path=trial_config_path, output_dir=trial_dir)
-    results.append(_trial_result(trial_dir, "trial_default", default_cfg))
-    for i, cfg in enumerate(small_grid, start=1):
-        tdir = output_root / f"trial_{i}"
+    # `trial_default` uses the YAML values exactly. `trial_i` applies one fixed override set on top of those defaults.
+    trial_specs = [("trial_default", default_cfg)] + [(f"trial_{i}", cfg) for i, cfg in enumerate(small_grid, start=1)]
+    for trial_name, trial_overrides in trial_specs:
+        trial_dir = output_root / trial_name
+        trial_dir.mkdir(parents=True, exist_ok=True)
         trial_config = {
             **config_payload,
-            **cfg,
-            "splits_path": str(splits_path),
-            "user_index_path": str(user_index_path),
-            "item_index_path": str(item_index_path),
-            "top_ks": args.top_ks,
+            **trial_overrides,
+            "top_ks": top_ks,
         }
-        trial_config_path = tdir / "trial_config.yaml"
-        tdir.mkdir(parents=True, exist_ok=True)
+        trial_config_path = trial_dir / "trial_config.yaml"
         trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
-        _run_train(trial_config_path=trial_config_path, output_dir=tdir)
-        results.append(_trial_result(tdir, f"trial_{i}", cfg))
+        run_train(config_path=str(trial_config_path), output_dir_override=trial_dir)
+        results.append(_trial_result(trial_dir, trial_name, trial_overrides))
+        _remove_tuning_bloat(trial_dir)
 
-    best = max(results, key=lambda r: r["validation_recall_at_20"])
-    best_two_tower = max(results, key=lambda r: r["two_tower_validation_recall_at_20"])
+    best = max(results, key=lambda result: result["validation_recall_at_20"])
+    best_two_tower = max(results, key=lambda result: result["two_tower_validation_recall_at_20"])
     summary = {
         "strategy": "fixed_small_grid_two_tower_local",
         "best_trial": best,
         "best_two_tower_trial": best_two_tower,
         "trials": results,
     }
-    out = output_root / "tuning_summary.json"
-    out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote tuning summary: {out}")
+    summary_path = output_root / "tuning_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote tuning summary: {summary_path}")
 
 
 if __name__ == "__main__":

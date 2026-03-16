@@ -1,2 +1,1 @@
 input_csv: "data/bronze/online_retail_ii/raw.csv" # shared source dataset path
-output_root: "data" # shared feature-store root (bronze/silver/gold)

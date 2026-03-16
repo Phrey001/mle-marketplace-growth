@@ -104,15 +104,15 @@ Revenue per Targeted User (Historical Realized):
 
 | Cycle | ML | Random | RFM | ML vs Random | ML vs RFM |
 |---|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 1432.0 | 505.8 | 1444.4 | +926.2 | -12.3 |
-| Cycle 2 (Retrain) | 956.0 | 307.7 | 949.3 | +648.4 | +6.7 |
+| Cycle 1 (Initial) | 1432.0 | 471.5 | 1444.4 | +960.5 | -12.3 |
+| Cycle 2 (Retrain) | 956.0 | 323.1 | 949.3 | +632.9 | +6.7 |
 
 Purchase Rate (Historical Realized):
 
 | Cycle | ML | Random | RFM | ML vs Random | ML vs RFM |
 |---|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 0.68 | 0.41 | 0.70 | +0.27 | -0.01 |
-| Cycle 2 (Retrain) | 0.66 | 0.35 | 0.65 | +0.31 | +0.01 |
+| Cycle 1 (Initial) | 0.68 | 0.44 | 0.70 | +0.24 | -0.01 |
+| Cycle 2 (Retrain) | 0.66 | 0.32 | 0.65 | +0.34 | +0.01 |
 
 Policy comparison details are stored in:
 - `artifacts/purchase_propensity/cycle_initial/offline_eval/offline_policy_budget_test.json`
@@ -126,8 +126,8 @@ Slice key: this section summarizes post-freeze results; model-quality columns (`
 
 | Cycle | Score Date | Model | ROC-AUC | PR-AUC | RMSE | MAE | MAPE | ML vs Random (rev/user) | ML vs RFM (rev/user) |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Cycle 1 (Initial) | 2010-11-01 | xgboost | 0.71 | 0.75 | 2018.9 | 691.9 | 1.2 | 926.2 | -12.3 |
-| Cycle 2 (Retrain) | 2011-02-01 | xgboost | 0.77 | 0.66 | 2872.6 | 800.8 | 2.7 | 648.4 | 6.7 |
+| Cycle 1 (Initial) | 2010-11-01 | xgboost | 0.71 | 0.75 | 2018.9 | 691.9 | 1.2 | 960.5 | -12.3 |
+| Cycle 2 (Retrain) | 2011-02-01 | xgboost | 0.77 | 0.66 | 2872.6 | 800.8 | 2.7 | 632.9 | 6.7 |
 
 Interpretation notes:
 - Ranking discrimination (`ROC-AUC`) and concentration (`Top-decile lift`) are stronger in retrain cycle.

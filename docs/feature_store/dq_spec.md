@@ -9,7 +9,7 @@ Implemented data quality checks and cleaning behavior for the feature-store pipe
 | `DQ_SILVER_001` | Silver `transactions_line_items` | Shared | Unique silver grain | Unique `(invoice_id, item_id, event_ts)` | Error | Stop pipeline |
 | `DQ_GOLD_001` | Gold `user_features_asof` | Purchase Propensity | Unique feature grain | Unique `(user_id, as_of_date)` | Error | Stop pipeline |
 | `DQ_GOLD_003` | Gold `labels` | Purchase Propensity | Label metadata validity | `label_name` in `{net_revenue_30d,purchase_30d,net_revenue_60d,purchase_60d,net_revenue_90d,purchase_90d}` and `window_days` matches suffix | Error | Stop pipeline |
-| `DQ_GOLD_005` | Gold `user_item_splits` | Recommender | Split validity | `split` in `{train,val,test}` and `split_version` non-empty | Error | Stop pipeline |
+| `DQ_GOLD_005` | Gold `user_item_splits` | Recommender | Split validity | `split` in `{train,val,test}` | Error | Stop pipeline |
 | `DQ_GOLD_006` | Gold `user_item_splits` | Recommender | Chronology | `max(train_ts) <= min(val_ts) <= min(test_ts)` | Error | Stop pipeline |
 | `DQ_GOLD_009` | Gold `propensity_train_dataset` | Purchase Propensity | Unique train grain | Unique `(user_id, as_of_date)` | Error | Stop pipeline |
 
