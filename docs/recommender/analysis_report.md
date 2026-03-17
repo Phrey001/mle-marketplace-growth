@@ -84,7 +84,9 @@ Metric consistency check:
 
 Key outputs present:
 - `artifacts/recommender/as_of=<recommender_max_event_date>/topk_recommendations.csv`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/model_bundle.pkl`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/selected_model_meta.json`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/shared_context.json`
+- `artifacts/recommender/as_of=<recommender_max_event_date>/models/<selected_model_name>/...`
 - `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index.bin`
 - `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index_meta.json`
 - `artifacts/recommender/as_of=<recommender_max_event_date>/output_validation_summary.json`

@@ -31,12 +31,13 @@ Feature-store note:
 ### 2) Run Pipeline
 
 ```bash
-# End-to-end recommender ML pipeline (train + predict + validate)
+# End-to-end recommender ML pipeline (select model + predict + validate + interpretation)
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.run_pipeline --config configs/recommender/default.yaml
 ```
 
 Pipeline note:
 - `run_pipeline.py` consumes the prebuilt recommender gold tables from `build_gold_recommender`.
+- `run_pipeline.py` writes both `output_validation_summary.json` and `output_interpretation.md`; there is no separate interpretation step in the recommended path.
 - Recommender feature-store outputs keep one canonical latest build; reruns overwrite prior outputs.
 
 ### 3) Refresh Report Chart
@@ -73,17 +74,17 @@ Use [default.yaml](/home/phrey/projects/mle-marketplace-growth/configs/recommend
 
 Use the commands below only if you want to inspect or rerun the offline ML pipeline stages one at a time instead of the prescribed `run_pipeline.py` path.
 
-### 1) Train
+### 1) Select Model
 
 ```bash
-# Train and offline-evaluate popularity/MF/two-tower from prebuilt gold
-PYTHONPATH=src python -m mle_marketplace_growth.recommender.train --config configs/recommender/default.yaml
+# Train and offline-evaluate popularity/MF/two-tower, then freeze one selected model
+PYTHONPATH=src python -m mle_marketplace_growth.recommender.train_and_select --config configs/recommender/default.yaml
 ```
 
 ### 2) Predict
 
 ```bash
-# Generate serving retrieval artifacts + Top-K candidates from frozen model bundle
+# Generate serving retrieval artifacts + Top-K candidates from frozen selected-model artifacts
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.predict --config configs/recommender/default.yaml
 ```
 
@@ -99,13 +100,13 @@ PYTHONPATH=src python -m mle_marketplace_growth.recommender.validate_outputs --c
 The standalone serving command is the same `Predict` step shown above. This section exists only as a quick reference because serving is a common review question.
 
 ```bash
-# Generate serving retrieval artifacts + Top-K candidates from frozen model bundle
+# Generate serving retrieval artifacts + Top-K candidates from frozen selected-model artifacts
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.predict --config configs/recommender/default.yaml
 ```
 
 Serving notes:
-- This is the batch-serving-style step after training has already frozen the selected model in `model_bundle.pkl`.
-- The script derives the canonical artifact folder from `recommender_max_event_date` in the same YAML config, then reads `artifacts/recommender/as_of=<recommender_max_event_date>/model_bundle.pkl`.
+- This is the batch-serving-style step after training has already frozen the selected model artifacts under `selected_model_meta.json`, `shared_context.json`, and `models/<selected_model_name>/...`.
+- The script derives the canonical artifact folder from `recommender_max_event_date` in the same YAML config, then reads `artifacts/recommender/as_of=<recommender_max_event_date>/selected_model_meta.json`.
 - It reads the saved model artifacts, builds ANN retrieval artifacts, and writes `topk_recommendations.csv`.
 - `run_pipeline.py` already includes this step so the recommended demo flow produces the final serving-style recommendation output in one run.
 - It is suitable as a standalone batch-scoring script for this demo repo, but not a full production deployment system by itself.

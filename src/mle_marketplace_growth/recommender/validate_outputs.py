@@ -35,6 +35,8 @@ def _core_artifact_paths(artifacts_dir: Path) -> dict[str, Path]:
         "train_metrics": artifacts_dir / "train_metrics.json",
         "validation_metrics": artifacts_dir / "validation_retrieval_metrics.json",
         "test_metrics": artifacts_dir / "test_retrieval_metrics.json",
+        "selected_model_meta": artifacts_dir / "selected_model_meta.json",
+        "shared_context": artifacts_dir / "shared_context.json",
         "index_json": artifacts_dir / "item_embedding_index.json",
         "ann_meta": artifacts_dir / "ann_index_meta.json",
         "topk_csv": artifacts_dir / "topk_recommendations.csv",
@@ -62,6 +64,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
     for path in paths.values():
         if not path.exists(): raise FileNotFoundError(f"Required artifact not found: {path}")
     train_metrics, validation_metrics, test_metrics = _load_core_artifacts(artifacts_dir)
+    selected_model_meta = read_json(paths["selected_model_meta"])
     index_json = read_json(paths["index_json"])
     ann_meta = read_json(paths["ann_meta"])
     topk_count = _count_csv_rows(paths["topk_csv"])
@@ -109,6 +112,14 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
             "description": "Top-K recommendation output must have at least one row.",
             "passed": topk_count > 0,
             "detail": f"row_count={topk_count}",
+        }
+    )
+    checks.append(
+        {
+            "check": "selected_model_meta_matches_selection",
+            "description": "Selected-model metadata should match the train selected model.",
+            "passed": selected_model_meta.get("selected_model_name") == selected_model,
+            "detail": f"meta_selected={selected_model_meta.get('selected_model_name')}",
         }
     )
     checks.append(
@@ -190,6 +201,22 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
     return report_path
 
 
+def run_validate_outputs(
+    artifacts_dir: Path,
+    *,
+    output_json: Path | None = None,
+    output_md: Path | None = None,
+) -> tuple[dict, Path]:
+    """What: Run artifact validation and write the interpretation summary together.
+    Why: Gives both the CLI and pipeline one validation/report entrypoint.
+    """
+    passed, summary = run_validation(artifacts_dir, output_json=output_json)
+    if not passed:
+        raise ValueError(f"Automated artifact validation failed: {[row for row in summary['checks'] if not row['passed']]}")
+    interpretation_path = write_interpretation(artifacts_dir, output_md=output_md)
+    return summary, interpretation_path
+
+
 def main() -> None:
     """What: CLI wrapper for artifact validation and interpretation output.
     Why: Exposes one command for contract checks and summary generation.
@@ -205,10 +232,12 @@ def main() -> None:
     paths = artifact_paths(runtime)
 
     # ===== Run =====
-    passed, summary = run_validation(artifacts_dir, output_json=paths.output_validation_summary)
-    if not passed: raise SystemExit(f"Validation failed: {[row for row in summary['checks'] if not row['passed']]}")
+    summary, interpretation_path = run_validate_outputs(
+        artifacts_dir,
+        output_json=paths.output_validation_summary,
+        output_md=paths.output_interpretation,
+    )
     # ===== Write Outputs =====
-    interpretation_path = write_interpretation(artifacts_dir, output_md=paths.output_interpretation)
     print(f"Wrote interpretation: {interpretation_path}")
     print(f"Validation passed: {paths.output_validation_summary}")
 

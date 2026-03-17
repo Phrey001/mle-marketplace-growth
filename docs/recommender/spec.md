@@ -36,7 +36,7 @@ Datetime ownership/bounds:
 | Stage | Script | Key output(s) |
 |---|---|---|
 | Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.parquet`, `user_item_splits.parquet`, `user_index.parquet`, `item_index.parquet` |
-| Train/evaluate | `mle_marketplace_growth.recommender.train` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `model_bundle.pkl` |
+| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `selected_model_meta.json`, `shared_context.json`, `models/<selected_model_name>/...` |
 | Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `item_embedding_index.json`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
 | Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
 
@@ -45,8 +45,9 @@ Datetime ownership/bounds:
 | Item | Contract |
 |---|---|
 | Baseline hierarchy | Random floor (`K/N`) -> Popularity -> MF -> Two-tower |
-| MF implementation | `TruncatedSVD` over implicit interaction matrix |
+| MF implementation | `TruncatedSVD` over sparse implicit user-item matrix |
 | Two-tower architecture | Embedding-only user tower and item tower (no hidden MLP layers) |
+| Two-tower train input | Explicit positive `(user_idx, item_idx)` pairs plus validation cache for early stopping |
 | Two-tower objective | Contrastive cross-entropy with in-batch + sampled negatives |
 | Two-tower scoring | L2-normalized dot product (cosine-style); temperature applied in training logits |
 | Primary metric | `Recall@20` |
@@ -54,6 +55,8 @@ Datetime ownership/bounds:
 
 Design note:
 - A deeper one-hidden-layer tower variant was considered earlier, but the current repo keeps embedding-only towers to avoid extra complexity without clear benefit for this demo implementation.
+- Training and scoring are already split by recommender model family, while shared evaluation and prediction load the selected model through a common scorer contract.
+- Offline evaluation belongs to the `train_and_select` stage. `helpers/metrics.py` provides the ranking/metric primitives, not a separate pipeline stage.
 
 Interaction signal:
 - Implemented models use binary user-item interactions: each unique `(user, item)` pair is counted once (duplicates collapsed; quantity ignored).
@@ -74,7 +77,9 @@ Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_eve
 - `train_metrics.json`
 - `validation_retrieval_metrics.json`
 - `test_retrieval_metrics.json`
-- `model_bundle.pkl`
+- `selected_model_meta.json`
+- `shared_context.json`
+- `models/<selected_model_name>/...`
 
 Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
 

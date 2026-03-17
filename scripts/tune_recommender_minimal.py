@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from mle_marketplace_growth.helpers import cfg_required
-from mle_marketplace_growth.recommender.train import run_train
+from mle_marketplace_growth.recommender.train_and_select import run_train_and_select
 
 # Fixed two-tower override sets applied on top of the base YAML defaults.
 TWO_TOWER_SWEEP_OVERRIDES = [
@@ -57,7 +57,7 @@ def _remove_tuning_bloat(output_dir: Path) -> None:
     """What: Remove per-trial artifacts not needed for tuning review.
     Why: Keeps the tuning output contract focused on config plus validation/test evidence.
     """
-    for artifact_name in ["model_bundle.pkl", "train_metrics.json"]:
+    for artifact_name in ["train_metrics.json"]:
         artifact_path = output_dir / artifact_name
         if artifact_path.exists():
             artifact_path.unlink()
@@ -108,7 +108,7 @@ def main() -> None:
         }
         trial_config_path = trial_dir / "trial_config.yaml"
         trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
-        run_train(config_path=str(trial_config_path), output_dir_override=trial_dir)
+        run_train_and_select(config_path=str(trial_config_path), output_dir_override=trial_dir)
         results.append(_trial_result(trial_dir, trial_name, trial_overrides))
         _remove_tuning_bloat(trial_dir)
 

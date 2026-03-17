@@ -1,7 +1,7 @@
-"""Generate user-level Top-K recommendations from trained retrieval model.
+"""Generate user-level Top-K recommendations from trained retrieval artifacts.
 
 Workflow Steps:
-1) Load runtime config and model bundle artifacts.
+1) Load runtime config and selected-model artifacts.
 2) Select item-side scoring matrix for the chosen model family.
 3) Build serving artifacts (item embeddings + ANN index metadata).
 4) Score each user and exclude train-seen items.
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import pickle
 from pathlib import Path
 
 import faiss
@@ -22,25 +21,15 @@ from mle_marketplace_growth.helpers import read_json, write_json
 from mle_marketplace_growth.recommender.constants import ANN_BACKEND
 from mle_marketplace_growth.recommender.helpers.artifacts import _write_ann_index
 from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
-from mle_marketplace_growth.recommender.helpers.eval import _top_k_indices
+from mle_marketplace_growth.recommender.models.mf import MFScorer
+from mle_marketplace_growth.recommender.models.popularity import PopularityScorer
+from mle_marketplace_growth.recommender.models.two_tower import TwoTowerScorer
 
-
-def _select_item_matrix(
-    selected_model_name: str,
-    popularity_scores: np.ndarray,
-    mf_item_embeddings: np.ndarray,
-    two_tower_item_embeddings: np.ndarray,
-) -> np.ndarray:
-    """What: Select item-side scoring matrix based on chosen model family.
-    Why: Unifies popularity/MF/two-tower serving flow under one retrieval path.
-    """
-    if selected_model_name == "popularity":
-        return popularity_scores.reshape(-1, 1)
-    if selected_model_name == "mf":
-        return mf_item_embeddings
-    if selected_model_name == "two_tower":
-        return two_tower_item_embeddings
-    raise ValueError(f"Unsupported selected model: {selected_model_name}")
+SCORER_REGISTRY = {
+    "popularity": PopularityScorer,
+    "mf": MFScorer,
+    "two_tower": TwoTowerScorer,
+}
 
 
 def _prepare_serving_artifacts(
@@ -79,120 +68,47 @@ def _load_ann_index(ann_index_path: Path, ann_meta_path: Path) -> faiss.Index:
         raise ValueError(f"Unsupported ANN backend: {metadata.get('backend')}")
     return faiss.read_index(str(ann_index_path))
 
-
-def _ann_retrieve_indices(
-    ann_index: faiss.Index,
-    user_vector: np.ndarray,
-    args_top_k: int,
-    seen_indices: set[int],
-    item_count: int,
-) -> list[int]:
-    """What: Retrieve top candidate item indices from ANN and remove seen items.
-    Why: Produces serving-style Top-K recommendations for each user.
-    """
-    oversample = min(item_count, max(args_top_k + len(seen_indices) + 20, args_top_k * 3))
-    _, indices = ann_index.search(user_vector.astype(np.float32), oversample)
-    ranked = []
-    for item_idx in indices[0].tolist():
-        if item_idx < 0:
-            continue
-        if item_idx in seen_indices:
-            continue
-        ranked.append(int(item_idx))
-        if len(ranked) >= args_top_k:
-            break
-    return ranked
-
-
-def _score_user_topk(
-    *,
-    selected_model_name: str,
-    user_index: int,
-    top_k: int,
-    item_count: int,
-    seen_indices: set[int],
-    popularity_scores: np.ndarray,
-    mf_user_embeddings: np.ndarray,
-    two_tower_user_embeddings: np.ndarray,
-    item_matrix: np.ndarray,
-    ann_index: faiss.Index | None,
-) -> tuple[list[int], list[float]]:
-    """What: Score and rank Top-K item indices for one user.
-    Why: Keeps run_predict loop focused on I/O while this helper handles model-specific scoring.
-    """
-    # ===== Model Family: Popularity =====
-    if selected_model_name == "popularity":
-        candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
-        if not candidate_indices:
-            return [], []
-        candidate_scores = popularity_scores[candidate_indices]
-        top_local = _top_k_indices(np.asarray(candidate_scores), min(top_k, len(candidate_indices)))
-        ranked_item_indices = [candidate_indices[idx] for idx in top_local]
-        ranked_scores = [float(candidate_scores[idx]) for idx in top_local]
-        return ranked_item_indices, ranked_scores
-
-    # ===== Model Family: MF / Two-Tower (ANN Retrieval) =====
-    if len(seen_indices) >= item_count:
-        return [], []
-    if ann_index is None:
-        raise ValueError("ANN index is required for non-popularity models.")
-
-    # Select user embedding vector based on selected model family.
-    if selected_model_name == "mf":
-        user_vector = mf_user_embeddings[user_index].reshape(1, -1)
-    elif selected_model_name == "two_tower":
-        user_vector = two_tower_user_embeddings[user_index].reshape(1, -1)
-    else:
-        raise ValueError(f"ANN retrieval is not supported for model: {selected_model_name}")
-
-    ranked_item_indices = _ann_retrieve_indices(
-        ann_index=ann_index,
-        user_vector=user_vector,
-        args_top_k=top_k,
-        seen_indices=seen_indices,
-        item_count=item_count,
-    )
-    ranked_scores = [float(item_matrix[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
-    return ranked_item_indices, ranked_scores
-
-
 def run_predict(config_path: str) -> None:
     """What: Score users to produce Top-K recommender output CSV.
-    Why: Reuses trained model bundle to generate serving-style retrieval artifacts.
+    Why: Reuses frozen selected-model artifacts to generate serving-style retrieval outputs.
     """
     # ===== Load Config =====
     runtime = load_recommender_runtime_config(config_path)
     paths = artifact_paths(runtime)
-    model_path = paths.model_bundle
+    selected_model_meta_path = paths.selected_model_meta
+    shared_context_path = paths.shared_context
     output_path = paths.topk_recommendations
     top_k = runtime.top_k
 
     # ===== Validate Inputs =====
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model bundle not found: {model_path}")
+    if not selected_model_meta_path.exists():
+        raise FileNotFoundError(f"Selected-model metadata not found: {selected_model_meta_path}")
+    if not shared_context_path.exists():
+        raise FileNotFoundError(f"Shared context not found: {shared_context_path}")
     if top_k < 1:
         raise ValueError("top_k must be >= 1")
 
     # ===== Load Inputs =====
-    with model_path.open("rb") as file:
-        bundle = pickle.load(file)
+    selected_model_meta = read_json(selected_model_meta_path)
+    shared_context = read_json(shared_context_path)
 
-    selected = bundle["selected_model_name"]
-    user_ids: list[str] = bundle["user_ids"]
-    item_ids: list[str] = bundle["item_ids"]
-    user_to_idx: dict[str, int] = bundle["user_to_idx"]
-    train_user_items: dict[str, set[str]] = bundle["train_user_items"]
+    selected = selected_model_meta["selected_model_name"]
+    user_ids: list[str] = shared_context["user_ids"]
+    item_ids: list[str] = shared_context["item_ids"]
+    user_to_idx: dict[str, int] = {str(key): int(value) for key, value in shared_context["user_to_idx"].items()}
+    train_user_items: dict[str, set[str]] = {
+        str(user_id): set(items) for user_id, items in shared_context["train_user_items"].items()
+    }
     item_to_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
-
-    popularity = np.asarray(bundle["popularity_scores"])
-    mf_user = np.asarray(bundle["mf_user_embeddings"])
-    mf_item = np.asarray(bundle["mf_item_embeddings"])
-    tt_user = np.asarray(bundle["two_tower_user_embeddings"])
-    tt_item = np.asarray(bundle["two_tower_item_embeddings"])
-    item_matrix = _select_item_matrix(selected, popularity, mf_item, tt_item)
+    model_dir = runtime.artifacts_dir / str(selected_model_meta["model_artifact_dir"])
+    scorer_cls = SCORER_REGISTRY.get(selected)
+    if scorer_cls is None:
+        raise ValueError(f"Unsupported selected model: {selected}")
+    scorer = scorer_cls.load_from_dir(model_dir)
+    item_matrix = scorer.item_matrix()
 
     # ===== Build Serving Artifacts =====
-    # Serving artifacts are intentionally produced in predict.py (not train.py)
+    # Serving artifacts are intentionally produced in predict.py (not train_and_select.py)
     # to keep training and serving responsibilities separate.
     ann_index_path, ann_meta_path = _prepare_serving_artifacts(
         artifacts_dir=runtime.artifacts_dir,
@@ -205,43 +121,24 @@ def run_predict(config_path: str) -> None:
     output_rows: list[list[str | int | float]] = []
     item_count = len(item_ids)
     # Load ANN index only for ANN-backed model families.
-    ann_index = _load_ann_index(ann_index_path, ann_meta_path) if selected in {"mf", "two_tower"} else None
+    ann_index = (
+        _load_ann_index(ann_index_path, ann_meta_path)
+        if isinstance(scorer, (MFScorer, TwoTowerScorer))
+        else None
+    )
     for user_id in user_ids:
         if user_id not in user_to_idx:
             continue
         user_idx = user_to_idx[user_id]
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
-        if selected == "popularity":
-            # ===== Model Family: Popularity =====
-            ranked_item_indices, ranked_scores = _score_user_topk(
-                selected_model_name=selected,
-                user_index=user_idx,
-                top_k=top_k,
-                item_count=item_count,
-                seen_indices=seen_indices,
-                popularity_scores=popularity,
-                mf_user_embeddings=mf_user,
-                two_tower_user_embeddings=tt_user,
-                item_matrix=item_matrix,
-                ann_index=None,
-            )
-        elif selected in {"mf", "two_tower"}:
-            # ===== Model Family: MF / Two-Tower =====
-            ranked_item_indices, ranked_scores = _score_user_topk(
-                selected_model_name=selected,
-                user_index=user_idx,
-                top_k=top_k,
-                item_count=item_count,
-                seen_indices=seen_indices,
-                popularity_scores=popularity,
-                mf_user_embeddings=mf_user,
-                two_tower_user_embeddings=tt_user,
-                item_matrix=item_matrix,
-                ann_index=ann_index,
-            )
-        else:
-            raise ValueError(f"Unsupported selected model: {selected}")
+        ranked_item_indices, ranked_scores = scorer.rank_user_topk(
+            user_index=user_idx,
+            top_k=top_k,
+            item_count=item_count,
+            seen_indices=seen_indices,
+            ann_index=ann_index,
+        )
         if not ranked_item_indices:
             continue
 

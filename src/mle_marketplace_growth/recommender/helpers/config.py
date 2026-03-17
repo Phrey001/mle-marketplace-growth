@@ -26,7 +26,8 @@ class RecommenderRuntimeConfig:
 
 @dataclass(frozen=True)
 class RecommenderArtifactPaths:
-    model_bundle: Path
+    selected_model_meta: Path
+    shared_context: Path
     topk_recommendations: Path
     output_validation_summary: Path
     output_interpretation: Path
@@ -68,7 +69,8 @@ def artifact_paths(runtime: RecommenderRuntimeConfig) -> RecommenderArtifactPath
     Why: Keeps all script outputs under a stable, shared run folder layout.
     """
     return RecommenderArtifactPaths(
-        model_bundle=runtime.artifacts_dir / "model_bundle.pkl",
+        selected_model_meta=runtime.artifacts_dir / "selected_model_meta.json",
+        shared_context=runtime.artifacts_dir / "shared_context.json",
         topk_recommendations=runtime.artifacts_dir / "topk_recommendations.csv",
         output_validation_summary=runtime.artifacts_dir / "output_validation_summary.json",
         output_interpretation=runtime.artifacts_dir / "output_interpretation.md",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pickle
+from dataclasses import dataclass
 from pathlib import Path
 
 import faiss
@@ -18,10 +18,43 @@ from mle_marketplace_growth.recommender.constants import (
 
 Workflow Steps:
 1) Persist ANN index artifacts from item embeddings.
-2) Persist selected-model bundle for prediction stage reuse.
+2) Persist selected-model metadata + model-specific artifacts for prediction reuse.
 3) Persist train/validation/test metric JSON payloads.
-4) Keep output schemas centralized outside train/predict scripts.
+4) Keep output schemas centralized outside train_and_select/predict scripts.
 """
+
+
+MODEL_ARTIFACT_FILES = {
+    "popularity": ("scores",),
+    "mf": ("user_embeddings", "item_embeddings"),
+    "two_tower": ("user_embeddings", "item_embeddings"),
+}
+
+
+@dataclass(frozen=True)
+class TrainArtifactContext:
+    split_path: Path
+    evaluation_top_k: int
+    user_ids: list[str]
+    item_ids: list[str]
+    user_to_idx: dict[str, int]
+    item_to_idx: dict[str, int]
+    train: dict[str, set[str]]
+    validation: dict[str, set[str]]
+    test: dict[str, set[str]]
+    model_config: dict
+
+
+@dataclass(frozen=True)
+class CandidateModelArtifactOutputs:
+    artifacts_by_model: dict[str, dict[str, np.ndarray]]
+
+
+@dataclass(frozen=True)
+class SelectionArtifactOutputs:
+    selected_model_name: str
+    validation_metrics: list[dict]
+    test_metrics: list[dict]
 
 
 def _write_ann_index(output_dir: Path, item_embeddings: np.ndarray) -> dict:
@@ -47,65 +80,71 @@ def _write_ann_index(output_dir: Path, item_embeddings: np.ndarray) -> dict:
 def _write_train_artifacts(
     output_dir: Path,
     *,
-    split_path: Path,
-    selected_model_name: str,
-    evaluation_top_k: int,
-    user_ids: list[str],
-    item_ids: list[str],
-    user_to_idx: dict[str, int],
-    item_to_idx: dict[str, int],
-    train: dict[str, set[str]],
-    validation: dict[str, set[str]],
-    test: dict[str, set[str]],
-    popularity: np.ndarray,
-    mf_user: np.ndarray,
-    mf_item: np.ndarray,
-    tt_user: np.ndarray,
-    tt_item: np.ndarray,
-    validation_metrics: list[dict],
-    test_metrics: list[dict],
-    model_config: dict,
+    context: TrainArtifactContext,
+    candidate_artifacts: CandidateModelArtifactOutputs,
+    selection: SelectionArtifactOutputs,
 ) -> None:
-    """What: Persist model bundle and training/evaluation metric artifacts.
-    Why: Centralizes output schema so train.py focuses on model-flow logic.
+    """What: Persist selected-model artifacts and training/evaluation metric artifacts.
+    Why: Centralizes output schema so the training-stage orchestrator stays focused on model-flow logic.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    models_root = output_dir / "models"
+    selected_model_name = selection.selected_model_name
+    selected_model_dir = models_root / selected_model_name
+    selected_model_dir.mkdir(parents=True, exist_ok=True)
 
-    with (output_dir / "model_bundle.pkl").open("wb") as file:
-        pickle.dump(
-            {
-                "selected_model_name": selected_model_name,
-                "user_ids": user_ids,
-                "item_ids": item_ids,
-                "user_to_idx": user_to_idx,
-                "item_to_idx": item_to_idx,
-                "train_user_items": train,
-                "evaluation_top_k": evaluation_top_k,
-                "popularity_scores": popularity,
-                "mf_user_embeddings": mf_user,
-                "mf_item_embeddings": mf_item,
-                "two_tower_user_embeddings": tt_user,
-                "two_tower_item_embeddings": tt_item,
-            },
-            file,
-        )
+    shared_context = {
+        "user_ids": context.user_ids,
+        "item_ids": context.item_ids,
+        "user_to_idx": context.user_to_idx,
+        "item_to_idx": context.item_to_idx,
+        "train_user_items": {user_id: sorted(item_ids) for user_id, item_ids in context.train.items()},
+        "evaluation_top_k": context.evaluation_top_k,
+    }
+    write_json(output_dir / "shared_context.json", shared_context)
 
-    write_json(output_dir / "validation_retrieval_metrics.json", {"rows": validation_metrics, "k_value": evaluation_top_k})
-    write_json(output_dir / "test_retrieval_metrics.json", {"rows": test_metrics, "k_value": evaluation_top_k})
+    selected_model_meta = {
+        "selected_model_name": selected_model_name,
+        "model_artifact_dir": str(selected_model_dir.relative_to(output_dir)),
+        "shared_context_path": "shared_context.json",
+        "evaluation_top_k": context.evaluation_top_k,
+    }
+    artifact_names = MODEL_ARTIFACT_FILES.get(selected_model_name)
+    if artifact_names is None:
+        raise ValueError(f"Unsupported selected model: {selected_model_name}")
+    model_artifacts = candidate_artifacts.artifacts_by_model.get(selected_model_name)
+    if model_artifacts is None:
+        raise ValueError(f"Missing candidate artifacts for selected model: {selected_model_name}")
+    for artifact_name in artifact_names:
+        artifact_payload = model_artifacts.get(artifact_name)
+        if artifact_payload is None:
+            raise ValueError(f"Missing artifact payload '{artifact_name}' for selected model: {selected_model_name}")
+        np.save(selected_model_dir / f"{artifact_name}.npy", artifact_payload)
+    selected_model_meta["artifact_files"] = [f"{artifact_name}.npy" for artifact_name in artifact_names]
+    write_json(output_dir / "selected_model_meta.json", selected_model_meta)
+
+    write_json(
+        output_dir / "validation_retrieval_metrics.json",
+        {"rows": selection.validation_metrics, "k_value": context.evaluation_top_k},
+    )
+    write_json(
+        output_dir / "test_retrieval_metrics.json",
+        {"rows": selection.test_metrics, "k_value": context.evaluation_top_k},
+    )
     write_json(
         output_dir / "train_metrics.json",
         {
-            "input_splits_path": str(split_path),
+            "input_splits_path": str(context.split_path),
             "selected_model_name": selected_model_name,
-            "selection_rule": f"maximize_validation_Recall@{evaluation_top_k}",
-            "k_value": evaluation_top_k,
+            "selection_rule": f"maximize_validation_Recall@{context.evaluation_top_k}",
+            "k_value": context.evaluation_top_k,
             "counts": {
-                "users_total": len(user_ids),
-                "items_train_universe": len(item_ids),
-                "train_users": len(train),
-                "validation_users": len(validation),
-                "test_users": len(test),
+                "users_total": len(context.user_ids),
+                "items_train_universe": len(context.item_ids),
+                "train_users": len(context.train),
+                "validation_users": len(context.validation),
+                "test_users": len(context.test),
             },
-            "model_config": model_config,
+            "model_config": context.model_config,
         },
     )

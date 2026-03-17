@@ -12,7 +12,7 @@ EXPECTED_MODELS = set(MODEL_NAMES)  # What: set form of supported model names. W
 EVALUATION_TOP_K = 20  # What: fixed evaluation cutoff. Why: recommender selection/reporting is standardized on Recall@20.
 ALLOWED_MF_WEIGHTINGS = ("binary", "tfidf")  # What: supported MF preprocessing modes. Why: fail fast on unsupported weighting labels.
 
-EARLY_STOP_METRIC = "val_recall_at_k"  # What: early-stop signal name. Why: train.py and model helper should log/store the same policy label.
+EARLY_STOP_METRIC = "val_recall_at_k"  # What: early-stop signal name. Why: train_and_select.py and the model helper should log/store the same policy label.
 NORMALIZE_EMBEDDINGS = True  # What: L2-normalize user/item vectors. Why: two-tower scoring uses cosine-style dot product.
 DEVICE = "auto"  # What: runtime device policy. Why: repo chooses CUDA when available, otherwise CPU, without user-facing override.
 MF_ALGORITHM = "randomized"  # What: TruncatedSVD solver mode. Why: stable fast default for this demo-scale MF baseline.
