@@ -97,6 +97,53 @@ class _PositivePairDataset(Dataset):
         return int(user_idx), int(item_idx)
 
 
+class UserEncoder(torch.nn.Module):
+    """What: Map user indices to embedding vectors.
+    Why: Makes the user tower explicit instead of accessing one raw embedding table directly.
+    """
+
+    def __init__(self, user_count: int, embedding_dim: int) -> None:
+        super().__init__()
+        self.embedding = torch.nn.Embedding(user_count, embedding_dim)
+        with torch.no_grad():
+            self.embedding.weight.normal_(mean=0.0, std=0.05)
+
+    def forward(self, user_indices: torch.Tensor) -> torch.Tensor:
+        return self.embedding(user_indices)
+
+
+class ItemEncoder(torch.nn.Module):
+    """What: Map item indices to embedding vectors.
+    Why: Makes the item tower explicit instead of accessing one raw embedding table directly.
+    """
+
+    def __init__(self, item_count: int, embedding_dim: int) -> None:
+        super().__init__()
+        self.embedding = torch.nn.Embedding(item_count, embedding_dim)
+        with torch.no_grad():
+            self.embedding.weight.normal_(mean=0.0, std=0.05)
+
+    def forward(self, item_indices: torch.Tensor) -> torch.Tensor:
+        return self.embedding(item_indices)
+
+
+class TwoTowerModel(torch.nn.Module):
+    """What: Bundle user and item encoders into one explicit two-tower model.
+    Why: Keeps the neural model definition clearer than managing raw embedding tables separately.
+    """
+
+    def __init__(self, user_count: int, item_count: int, embedding_dim: int) -> None:
+        super().__init__()
+        self.user_encoder = UserEncoder(user_count, embedding_dim)
+        self.item_encoder = ItemEncoder(item_count, embedding_dim)
+
+    def user_embeddings(self, user_indices: torch.Tensor) -> torch.Tensor:
+        return self.user_encoder(user_indices)
+
+    def item_embeddings(self, item_indices: torch.Tensor) -> torch.Tensor:
+        return self.item_encoder(item_indices)
+
+
 def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
     """What: L2-normalize each row vector.
     Why: Keeps embedding similarity as cosine-style dot product.
@@ -155,8 +202,7 @@ def _build_validation_cache(
 
 def _validation_recall_at_k(
     *,
-    user_embedding_table: torch.nn.Embedding,
-    item_embedding_table: torch.nn.Embedding,
+    model: TwoTowerModel,
     validation_cache: TwoTowerValidationCache,
     early_stop_k: int,
     batch_size: int,
@@ -169,7 +215,7 @@ def _validation_recall_at_k(
     if not validation_cache.user_indices:
         return 0.0
     with torch.no_grad():
-        item_embedding_matrix = item_embedding_table.weight.detach()
+        item_embedding_matrix = model.item_encoder.embedding.weight.detach()
         if normalize_embeddings:
             item_embedding_matrix = F.normalize(item_embedding_matrix, p=2, dim=1)
         k = min(max(1, early_stop_k), item_embedding_matrix.shape[0])
@@ -177,7 +223,12 @@ def _validation_recall_at_k(
         recall_sum = 0.0
         for start in range(0, len(validation_cache.user_indices), batch_eval_size):
             end = min(start + batch_eval_size, len(validation_cache.user_indices))
-            user_embeddings_batch = user_embedding_table.weight[validation_cache.user_indices[start:end]].detach()
+            batch_user_indices = torch.as_tensor(
+                validation_cache.user_indices[start:end],
+                dtype=torch.long,
+                device=item_embedding_matrix.device,
+            )
+            user_embeddings_batch = model.user_embeddings(batch_user_indices).detach()
             if normalize_embeddings:
                 user_embeddings_batch = F.normalize(user_embeddings_batch, p=2, dim=1)
             similarity_scores = (user_embeddings_batch @ item_embedding_matrix.T) / float(temperature)
@@ -230,19 +281,15 @@ def _train_two_tower_from_pairs(
             generator=loader_generator,
         )
 
-    def _init_two_tower_components() -> tuple[torch.nn.Module, torch.nn.Module, torch.optim.Optimizer, torch.nn.Module]:
-        user_embedding_table = torch.nn.Embedding(user_count, embedding_dim).to(device_obj)
-        item_embedding_table = torch.nn.Embedding(item_count, embedding_dim).to(device_obj)
-        with torch.no_grad():
-            user_embedding_table.weight.normal_(mean=0.0, std=0.05)
-            item_embedding_table.weight.normal_(mean=0.0, std=0.05)
+    def _init_two_tower_components() -> tuple[TwoTowerModel, torch.optim.Optimizer, torch.nn.Module]:
+        model = TwoTowerModel(user_count=user_count, item_count=item_count, embedding_dim=embedding_dim).to(device_obj)
         optimizer_obj = torch.optim.AdamW(
-            list(user_embedding_table.parameters()) + list(item_embedding_table.parameters()),
+            model.parameters(),
             lr=learning_rate,
             weight_decay=l2_reg if l2_reg > 0 else 0.0,
         )
         loss_module = torch.nn.CrossEntropyLoss()
-        return user_embedding_table, item_embedding_table, optimizer_obj, loss_module
+        return model, optimizer_obj, loss_module
 
     np_rng = np.random.default_rng(42)
     torch.manual_seed(42)
@@ -256,7 +303,7 @@ def _train_two_tower_from_pairs(
     if positive_array.size == 0:
         raise ValueError("No positive interactions available for two-tower training.")
     training_loader = _build_training_loader()
-    user_embedding_table, item_embedding_table, optimizer, loss_fn = _init_two_tower_components()
+    model, optimizer, loss_fn = _init_two_tower_components()
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
     if early_stop_metric not in {"loss", "val_recall_at_k"}:
@@ -281,8 +328,8 @@ def _train_two_tower_from_pairs(
             batch_positive_items = batch_positive_items_cpu.long().to(device_obj)
 
             # Score positive user-item pairs inside the current mini-batch.
-            user_embeddings_batch = user_embedding_table(batch_users)
-            positive_item_embeddings_batch = item_embedding_table(batch_positive_items)
+            user_embeddings_batch = model.user_embeddings(batch_users)
+            positive_item_embeddings_batch = model.item_embeddings(batch_positive_items)
             if normalize_embeddings:
                 user_embeddings_batch = F.normalize(user_embeddings_batch, p=2, dim=1)
                 positive_item_embeddings_batch = F.normalize(positive_item_embeddings_batch, p=2, dim=1)
@@ -293,7 +340,7 @@ def _train_two_tower_from_pairs(
                 sampled_negative_items = torch.from_numpy(
                     np_rng.integers(0, item_count, size=(len(batch_users), negative_samples), dtype=np.int64)
                 ).long().to(device_obj)
-                negative_item_embeddings_batch = item_embedding_table(sampled_negative_items)
+                negative_item_embeddings_batch = model.item_embeddings(sampled_negative_items)
                 if normalize_embeddings:
                     negative_item_embeddings_batch = F.normalize(negative_item_embeddings_batch, p=2, dim=2)
                 sampled_negative_logits = (
@@ -307,10 +354,7 @@ def _train_two_tower_from_pairs(
             optimizer.zero_grad()
             loss.backward()
             if max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    list(user_embedding_table.parameters()) + list(item_embedding_table.parameters()),
-                    max_norm=max_grad_norm,
-                )
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             optimizer.step()
             epoch_loss_sum += float(loss.item())
             epoch_steps += 1
@@ -321,8 +365,7 @@ def _train_two_tower_from_pairs(
         epoch_avg_loss = epoch_loss_sum / epoch_steps
         epoch_val_recall = (
             _validation_recall_at_k(
-                user_embedding_table=user_embedding_table,
-                item_embedding_table=item_embedding_table,
+                model=model,
                 validation_cache=validation_cache,
                 early_stop_k=early_stop_k,
                 batch_size=batch_size,
@@ -359,8 +402,8 @@ def _train_two_tower_from_pairs(
             break
 
     with torch.no_grad():
-        final_user = user_embedding_table.weight.detach().cpu().numpy()
-        final_item = item_embedding_table.weight.detach().cpu().numpy()
+        final_user = model.user_encoder.embedding.weight.detach().cpu().numpy()
+        final_item = model.item_encoder.embedding.weight.detach().cpu().numpy()
     return final_user, final_item
 
 
