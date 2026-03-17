@@ -1,76 +1,74 @@
 """Train recommender candidate models on one shared train/validation split.
 
 Workflow Steps:
-1) Accept shared split interactions, entity indices, and train params.
-2) Train popularity, MF, and two-tower candidates in dedicated model modules.
-3) Return model-scoped in-memory artifacts for downstream offline selection.
+1) Accept shared split interactions, entity indices, and model-specific params.
+2) Train popularity, MF, and two-tower candidates through explicit model-specific paths.
+3) Return one in-memory artifact payload per model family.
 """
 
 from __future__ import annotations
 
-from mle_marketplace_growth.recommender.contracts import (
-    CandidateModelArtifacts,
-    RecommenderTrainParams,
-)
+import numpy as np
+import pandas as pd
+
 from mle_marketplace_growth.recommender.helpers.data import EntityIndex, SplitInteractions
-from mle_marketplace_growth.recommender.models.mf import train_mf_candidate
-from mle_marketplace_growth.recommender.models.popularity import build_item_interaction_counts, train_popularity_candidate
-from mle_marketplace_growth.recommender.models.two_tower import train_two_tower_candidate
+from mle_marketplace_growth.recommender.models.mf import MFTrainParams, train_mf_candidate
+from mle_marketplace_growth.recommender.models.popularity import build_train_item_interaction_counts, train_popularity_candidate
+from mle_marketplace_growth.recommender.models.two_tower import TwoTowerTrainParams, train_two_tower_candidate
 
 
-def train_candidate_models(
+def train_popularity_artifacts(
+    *,
+    user_item_splits_df: pd.DataFrame,
+    item_index_df: pd.DataFrame,
+) -> dict[str, np.ndarray]:
+    """What: Train the popularity candidate artifact payload.
+    Why: Keeps the popularity training path explicit and separate from MF/two-tower.
+    """
+    popularity_item_counts = build_train_item_interaction_counts(user_item_splits_df, item_index_df)
+    return {"scores": train_popularity_candidate(popularity_item_counts)}
+
+
+def train_mf_artifacts(
     *,
     split_interactions: SplitInteractions,
     user_index: EntityIndex,
     item_index: EntityIndex,
-    train_params: RecommenderTrainParams,
-) -> CandidateModelArtifacts:
-    """What: Train popularity, MF, and two-tower candidates through dedicated model modules.
-    Why: This stage intentionally trains all supported model families in one run so they are compared fairly on the same data split.
+    mf_params: MFTrainParams,
+) -> dict[str, np.ndarray]:
+    """What: Train the MF candidate artifact payload.
+    Why: Keeps the MF training path explicit and separate from popularity/two-tower.
     """
-    train_interactions = split_interactions.train
-    validation_interactions = split_interactions.validation
-    user_id_to_idx = user_index.id_to_idx
-    item_id_to_idx = item_index.id_to_idx
-
-    # Popularity only needs item-level counts after train interactions are fixed.
-    popularity_item_counts = build_item_interaction_counts(train_interactions, item_id_to_idx)
-    popularity_scores = train_popularity_candidate(popularity_item_counts)
     mf_user_embeddings, mf_item_embeddings = train_mf_candidate(
-        train_interactions,
-        user_id_to_idx,
-        item_id_to_idx,
-        mf_components=train_params.mf_components,
-        mf_n_iter=train_params.mf_n_iter,
-        mf_weighting=train_params.mf_weighting,
+        split_interactions.train,
+        user_index.id_to_idx,
+        item_index.id_to_idx,
+        params=mf_params,
     )
+    return {
+        "user_embeddings": mf_user_embeddings,
+        "item_embeddings": mf_item_embeddings,
+    }
+
+
+def train_two_tower_artifacts(
+    *,
+    split_interactions: SplitInteractions,
+    user_index: EntityIndex,
+    item_index: EntityIndex,
+    two_tower_params: TwoTowerTrainParams,
+) -> dict[str, np.ndarray]:
+    """What: Train the two-tower candidate artifact payload.
+    Why: Keeps the two-tower training path explicit and separate from popularity/MF.
+    """
     tt_user_embeddings, tt_item_embeddings = train_two_tower_candidate(
-        train_interactions,
-        validation_interactions,
-        user_id_to_idx,
-        item_id_to_idx,
-        embedding_dim=train_params.embedding_dim,
-        epochs=train_params.epochs,
-        learning_rate=train_params.learning_rate,
-        negative_samples=train_params.negative_samples,
-        batch_size=train_params.batch_size,
-        l2_reg=train_params.l2_reg,
-        max_grad_norm=train_params.max_grad_norm,
-        early_stop_rounds=train_params.early_stop_rounds,
-        early_stop_k=train_params.early_stop_k,
-        early_stop_tolerance=train_params.early_stop_tolerance,
-        temperature=train_params.temperature,
+        split_interactions.train,
+        split_interactions.validation,
+        user_index.id_to_idx,
+        item_index.id_to_idx,
+        params=two_tower_params,
     )
-    return CandidateModelArtifacts(
-        artifacts_by_model={
-            "popularity": {"scores": popularity_scores},
-            "mf": {
-                "user_embeddings": mf_user_embeddings,
-                "item_embeddings": mf_item_embeddings,
-            },
-            "two_tower": {
-                "user_embeddings": tt_user_embeddings,
-                "item_embeddings": tt_item_embeddings,
-            },
-        },
-    )
+    return {
+        "user_embeddings": tt_user_embeddings,
+        "item_embeddings": tt_item_embeddings,
+    }

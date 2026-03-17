@@ -19,6 +19,14 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import normalize
 
 from mle_marketplace_growth.recommender.constants import MF_ALGORITHM
+from mle_marketplace_growth.recommender.models import RankedItems
+
+
+@dataclass(frozen=True)
+class MFTrainParams:
+    mf_components: int
+    mf_n_iter: int
+    mf_weighting: str
 
 
 def _interaction_pairs(
@@ -111,9 +119,9 @@ class MFScorer:
         item_count: int,
         seen_indices: set[int],
         ann_index: faiss.Index | None,
-    ) -> tuple[list[int], list[float]]:
+    ) -> RankedItems:
         if len(seen_indices) >= item_count:
-            return [], []
+            return RankedItems(item_indices=[], scores=[])
         if ann_index is None:
             raise ValueError("ANN index is required for MF scoring.")
         user_vector = self.user_embeddings[user_index].reshape(1, -1)
@@ -127,7 +135,7 @@ class MFScorer:
             if len(ranked_item_indices) >= top_k:
                 break
         ranked_scores = [float(self.item_embeddings[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
-        return ranked_item_indices, ranked_scores
+        return RankedItems(item_indices=ranked_item_indices, scores=ranked_scores)
 
     def item_matrix(self) -> np.ndarray:
         return self.item_embeddings
@@ -148,9 +156,7 @@ def train_mf_candidate(
     user_to_idx: dict[str, int],
     item_to_idx: dict[str, int],
     *,
-    mf_components: int,
-    mf_n_iter: int,
-    mf_weighting: str,
+    params: MFTrainParams,
 ) -> tuple[np.ndarray, np.ndarray]:
     """What: Train the MF candidate user/item factors.
     Why: Keeps MF-specific fitting and MF-only knobs separate from other models.
@@ -158,14 +164,15 @@ def train_mf_candidate(
     interaction_matrix = _build_mf_interaction_matrix(train, user_to_idx, item_to_idx)
     mf_user_embeddings, mf_item_embeddings = _train_mf(
         interaction_matrix,
-        n_components=mf_components,
-        n_iter=mf_n_iter,
-        weighting=mf_weighting,
+        n_components=params.mf_components,
+        n_iter=params.mf_n_iter,
+        weighting=params.mf_weighting,
         algorithm=MF_ALGORITHM,
         tol=0.0,
     )
     print(
         "[recommender.models.mf] trained mf baseline "
-        f"(components={mf_components}, n_iter={mf_n_iter}, weighting={mf_weighting}, algorithm={MF_ALGORITHM})"
+        f"(components={params.mf_components}, n_iter={params.mf_n_iter}, "
+        f"weighting={params.mf_weighting}, algorithm={MF_ALGORITHM})"
     )
     return mf_user_embeddings, mf_item_embeddings

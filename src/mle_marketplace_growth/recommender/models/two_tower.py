@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from mle_marketplace_growth.recommender.constants import DEVICE, EARLY_STOP_METRIC, NORMALIZE_EMBEDDINGS
+from mle_marketplace_growth.recommender.models import RankedItems
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,21 @@ class TwoTowerValidationCache:
     user_indices: list[int]
     target_item_indices: list[set[int]]
     seen_train_item_indices: list[list[int]]
+
+
+@dataclass(frozen=True)
+class TwoTowerTrainParams:
+    embedding_dim: int
+    epochs: int
+    learning_rate: float
+    negative_samples: int
+    batch_size: int
+    l2_reg: float
+    max_grad_norm: float
+    early_stop_rounds: int
+    early_stop_k: int
+    early_stop_tolerance: float
+    temperature: float
 
 
 @dataclass(frozen=True)
@@ -49,9 +65,9 @@ class TwoTowerScorer:
         item_count: int,
         seen_indices: set[int],
         ann_index: faiss.Index | None,
-    ) -> tuple[list[int], list[float]]:
+    ) -> RankedItems:
         if len(seen_indices) >= item_count:
-            return [], []
+            return RankedItems(item_indices=[], scores=[])
         if ann_index is None:
             raise ValueError("ANN index is required for two-tower scoring.")
         user_vector = self.user_embeddings[user_index].reshape(1, -1)
@@ -65,7 +81,7 @@ class TwoTowerScorer:
             if len(ranked_item_indices) >= top_k:
                 break
         ranked_scores = [float(self.item_embeddings[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
-        return ranked_item_indices, ranked_scores
+        return RankedItems(item_indices=ranked_item_indices, scores=ranked_scores)
 
     def item_matrix(self) -> np.ndarray:
         return self.item_embeddings
@@ -468,17 +484,7 @@ def train_two_tower_candidate(
     user_to_idx: dict[str, int],
     item_to_idx: dict[str, int],
     *,
-    embedding_dim: int,
-    epochs: int,
-    learning_rate: float,
-    negative_samples: int,
-    batch_size: int,
-    l2_reg: float,
-    max_grad_norm: float,
-    early_stop_rounds: int,
-    early_stop_k: int,
-    early_stop_tolerance: float,
-    temperature: float,
+    params: TwoTowerTrainParams,
 ) -> tuple[np.ndarray, np.ndarray]:
     """What: Train the two-tower candidate user/item embeddings.
     Why: Keeps two-tower-specific fitting and knobs separate from other models.
@@ -489,21 +495,21 @@ def train_two_tower_candidate(
         positive_array=positive_train_pairs,
         user_count=len(user_to_idx),
         item_count=len(item_to_idx),
-        embedding_dim=embedding_dim,
-        epochs=epochs,
-        learning_rate=learning_rate,
-        negative_samples=negative_samples,
-        batch_size=batch_size,
-        l2_reg=l2_reg,
-        max_grad_norm=max_grad_norm,
-        early_stop_rounds=early_stop_rounds,
+        embedding_dim=params.embedding_dim,
+        epochs=params.epochs,
+        learning_rate=params.learning_rate,
+        negative_samples=params.negative_samples,
+        batch_size=params.batch_size,
+        l2_reg=params.l2_reg,
+        max_grad_norm=params.max_grad_norm,
+        early_stop_rounds=params.early_stop_rounds,
         early_stop_metric=EARLY_STOP_METRIC,
-        early_stop_k=early_stop_k,
-        early_stop_tolerance=early_stop_tolerance,
+        early_stop_k=params.early_stop_k,
+        early_stop_tolerance=params.early_stop_tolerance,
         validation_user_indices=validation_cache.user_indices,
         validation_target_indices=validation_cache.target_item_indices,
         validation_seen_indices=validation_cache.seen_train_item_indices,
-        temperature=temperature,
+        temperature=params.temperature,
         normalize_embeddings=NORMALIZE_EMBEDDINGS,
         device=DEVICE,
         verbose=True,

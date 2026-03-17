@@ -14,27 +14,30 @@ from pathlib import Path
 
 import faiss
 import numpy as np
+import pandas as pd
 
 from mle_marketplace_growth.recommender.constants import POPULARITY_TRANSFORM
 from mle_marketplace_growth.recommender.helpers.metrics import _top_k_indices
+from mle_marketplace_growth.recommender.models import RankedItems
 
 
-def build_item_interaction_counts(
-    train_interactions: dict[str, set[str]],
-    item_id_to_idx: dict[str, int],
+def build_train_item_interaction_counts(
+    user_item_splits_df: pd.DataFrame,
+    item_index_df: pd.DataFrame,
 ) -> np.ndarray:
-    """What: Count how many train users interacted with each item.
-    Why: Popularity training only needs item-level counts, not the full user->items map after this step.
+    """What: Count how many train interactions map to each item index.
+    Why: Popularity training can stay pandas-native by joining split rows to the item index table directly.
     """
-    observed_item_indices = [
-        item_id_to_idx[item_id]
-        for item_ids in train_interactions.values()
-        for item_id in item_ids
-        if item_id in item_id_to_idx
-    ]
-    if not observed_item_indices:
-        return np.zeros(len(item_id_to_idx), dtype=float)
-    return np.bincount(observed_item_indices, minlength=len(item_id_to_idx)).astype(float)
+    train_item_indices = (
+        user_item_splits_df.loc[user_item_splits_df["split"] == "train", ["item_id"]]
+        .merge(item_index_df[["item_id", "item_idx"]], on="item_id", how="inner")
+        ["item_idx"]
+        .astype(int)
+        .to_numpy()
+    )
+    if train_item_indices.size == 0:
+        return np.zeros(len(item_index_df), dtype=float)
+    return np.bincount(train_item_indices, minlength=len(item_index_df)).astype(float)
 
 
 def _popularity_scores(
@@ -75,16 +78,16 @@ class PopularityScorer:
         item_count: int,
         seen_indices: set[int],
         ann_index: faiss.Index | None,
-    ) -> tuple[list[int], list[float]]:
+    ) -> RankedItems:
         del user_index, ann_index
         candidate_indices = [idx for idx in range(item_count) if idx not in seen_indices]
         if not candidate_indices:
-            return [], []
+            return RankedItems(item_indices=[], scores=[])
         candidate_scores = self.scores[candidate_indices]
         top_local = _top_k_indices(np.asarray(candidate_scores), min(top_k, len(candidate_indices)))
         ranked_item_indices = [candidate_indices[idx] for idx in top_local]
         ranked_scores = [float(candidate_scores[idx]) for idx in top_local]
-        return ranked_item_indices, ranked_scores
+        return RankedItems(item_indices=ranked_item_indices, scores=ranked_scores)
 
     def item_matrix(self) -> np.ndarray:
         return self.scores.reshape(-1, 1)

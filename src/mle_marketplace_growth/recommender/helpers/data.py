@@ -30,6 +30,8 @@ class EntityIndex:
     id_to_idx: dict[str, int]
 
 
+# ===== Schema Checks =====
+
 def _require_columns(rows_df: pd.DataFrame, required: set[str], *, label: str) -> None:
     """What: Assert a DataFrame contains the required columns for one contract.
     Why: Keeps the loaders focused on flow rather than repeated schema-check boilerplate.
@@ -67,6 +69,8 @@ def _validate_unique_contiguous_index(indexed_df: pd.DataFrame, *, id_col: str, 
         raise ValueError(f"Entity idx must be contiguous from 0 in {path}")
 
 
+# ===== Split-Table Loading =====
+
 def _read_parquet_to_df(path: Path) -> pd.DataFrame:
     """What: Load parquet rows into a pandas DataFrame via DuckDB.
     Why: Keeps downstream ML prep on columnar/tabular structures.
@@ -89,6 +93,8 @@ def _load_user_item_splits_df(path: Path) -> pd.DataFrame:
     _validate_allowed_splits(user_item_splits_df["split"])
     return user_item_splits_df
 
+
+# ===== Split-Table Transforms =====
 
 def _validate_split_chronology(user_item_splits_df: pd.DataFrame) -> None:
     """What: Enforce per-user train < validation < test temporal ordering.
@@ -162,6 +168,8 @@ def _build_split_interactions(
     return SplitInteractions(train=train, validation=validation, test=test)
 
 
+# ===== Entity-Index Loaders =====
+
 def _load_entity_index(path: Path, id_col: str, idx_col: str) -> EntityIndex:
     """What: Load entity index table and validate unique contiguous indices.
     Why: Guarantees stable row-index mapping for embedding matrices.
@@ -183,3 +191,45 @@ def _load_entity_index(path: Path, id_col: str, idx_col: str) -> EntityIndex:
     )
     id_to_idx = indexed_df.set_index(id_col)[idx_col].to_dict()
     return EntityIndex(ids=ordered_ids, id_to_idx=id_to_idx)
+
+
+def _load_user_index(path: Path) -> EntityIndex:
+    """What: Load the user index table as the normalized user-index contract.
+    Why: Makes user-index loading explicit at the call site.
+    """
+    return _load_entity_index(path, id_col="user_id", idx_col="user_idx")
+
+
+def _load_item_index(path: Path) -> EntityIndex:
+    """What: Load the item index table as the normalized item-index contract.
+    Why: Makes item-index loading explicit at the call site.
+    """
+    return _load_entity_index(path, id_col="item_id", idx_col="item_idx")
+
+
+def _load_entity_index_df(path: Path, id_col: str, idx_col: str) -> pd.DataFrame:
+    """What: Load entity index table as a normalized DataFrame with validated contiguous indices.
+    Why: Some model paths are more readable with pandas-native joins than with dict lookups.
+    """
+    entity_index_df = _read_parquet_to_df(path)
+    if entity_index_df.empty:
+        raise ValueError(f"No rows found in entity index file: {path}")
+    _require_columns(entity_index_df, {id_col, idx_col}, label=f"entity index file {path}")
+    indexed_df = entity_index_df[[id_col, idx_col]].copy()
+    indexed_df[idx_col] = indexed_df[idx_col].astype(int)
+    _validate_unique_contiguous_index(indexed_df, id_col=id_col, idx_col=idx_col, path=path)
+    return indexed_df
+
+
+def _load_user_index_df(path: Path) -> pd.DataFrame:
+    """What: Load the user index table as a normalized DataFrame.
+    Why: Makes user-index dataframe use explicit at the call site.
+    """
+    return _load_entity_index_df(path, id_col="user_id", idx_col="user_idx")
+
+
+def _load_item_index_df(path: Path) -> pd.DataFrame:
+    """What: Load the item index table as a normalized DataFrame.
+    Why: Makes item-index dataframe use explicit at the call site.
+    """
+    return _load_entity_index_df(path, id_col="item_id", idx_col="item_idx")

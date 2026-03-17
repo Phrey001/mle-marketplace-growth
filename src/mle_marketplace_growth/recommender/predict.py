@@ -36,6 +36,16 @@ SCORER_REGISTRY = {
 }
 
 
+def _load_selected_scorer(selected_model_name: str, model_dir: Path):
+    """What: Load the selected-model scorer from persisted model artifacts.
+    Why: Keeps serving-time scorer resolution parallel to offline candidate scorer construction.
+    """
+    scorer_cls = SCORER_REGISTRY.get(selected_model_name)
+    if scorer_cls is None:
+        raise ValueError(f"Unsupported selected model: {selected_model_name}")
+    return scorer_cls.load_from_dir(model_dir)
+
+
 def _prepare_serving_artifacts(
     artifacts_dir: Path,
     selected_model_name: str,
@@ -103,10 +113,7 @@ def run_predict(config_path: str) -> None:
     train_user_items = shared_runtime_context.train_user_items
     item_to_idx = shared_runtime_context.item_to_idx
     model_dir = runtime.artifacts_dir / selected_model_meta.model_artifact_dir
-    scorer_cls = SCORER_REGISTRY.get(selected)
-    if scorer_cls is None:
-        raise ValueError(f"Unsupported selected model: {selected}")
-    scorer = scorer_cls.load_from_dir(model_dir)
+    scorer = _load_selected_scorer(selected, model_dir)
     item_matrix = scorer.item_matrix()
 
     # ===== Build Serving Artifacts =====
@@ -134,17 +141,20 @@ def run_predict(config_path: str) -> None:
         user_idx = user_to_idx[user_id]
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
-        ranked_item_indices, ranked_scores = scorer.rank_user_topk(
+        ranked_items = scorer.rank_user_topk(
             user_index=user_idx,
             top_k=top_k,
             item_count=item_count,
             seen_indices=seen_indices,
             ann_index=ann_index,
         )
-        if not ranked_item_indices:
+        if not ranked_items.item_indices:
             continue
 
-        for rank, (item_idx, item_score) in enumerate(zip(ranked_item_indices, ranked_scores, strict=True), start=1):
+        for rank, (item_idx, item_score) in enumerate(
+            zip(ranked_items.item_indices, ranked_items.scores, strict=True),
+            start=1,
+        ):
             output_rows.append([user_id, rank, item_ids[item_idx], round(item_score, 6), selected])
 
     # ===== Write Outputs =====

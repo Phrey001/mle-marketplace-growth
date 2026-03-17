@@ -33,15 +33,12 @@ MODEL_ARTIFACT_FILES = {
 
 @dataclass(frozen=True)
 class TrainArtifactContext:
-    split_path: Path
     evaluation_top_k: int
     user_ids: list[str]
     item_ids: list[str]
     user_to_idx: dict[str, int]
     item_to_idx: dict[str, int]
     train: dict[str, set[str]]
-    validation: dict[str, set[str]]
-    test: dict[str, set[str]]
     model_config: dict
 
 
@@ -170,24 +167,10 @@ def _write_ann_index(output_dir: Path, item_embeddings: np.ndarray) -> dict:
     }
 
 
-def _write_train_artifacts(
-    output_dir: Path,
-    *,
-    context: TrainArtifactContext,
-    candidate_artifacts: CandidateModelArtifactOutputs,
-    selection: SelectionArtifactOutputs,
-) -> None:
-    """What: Persist selected-model artifacts and training/evaluation metric artifacts.
-    Why: Centralizes output schema so the training-stage orchestrator stays focused on model-flow logic.
+def _write_shared_runtime_context(output_dir: Path, context: TrainArtifactContext) -> None:
+    """What: Persist the shared train-time runtime context used later by predict.py.
+    Why: Keeps the top-level train-artifact writer visually focused on stage ordering.
     """
-    # ===== Prepare Output Directories =====
-    output_dir.mkdir(parents=True, exist_ok=True)
-    models_root = output_dir / "models"
-    selected_model_name = selection.selected_model_name
-    selected_model_dir = models_root / selected_model_name
-    selected_model_dir.mkdir(parents=True, exist_ok=True)
-
-    # ===== Persist Shared Runtime Context =====
     shared_runtime_context = SharedRuntimeContext(
         user_ids=context.user_ids,
         item_ids=context.item_ids,
@@ -198,7 +181,19 @@ def _write_train_artifacts(
     )
     write_json(output_dir / "shared_context.json", _shared_runtime_context_payload(shared_runtime_context))
 
-    # ===== Persist Selected Model Artifacts =====
+
+def _write_selected_model_artifacts(
+    output_dir: Path,
+    *,
+    selected_model_dir: Path,
+    context: TrainArtifactContext,
+    candidate_artifacts: CandidateModelArtifactOutputs,
+    selection: SelectionArtifactOutputs,
+) -> None:
+    """What: Persist the selected model's artifact payload and selection metadata.
+    Why: Keeps selected-model artifact details separate from shared-context and metric writes.
+    """
+    selected_model_name = selection.selected_model_name
     selected_model_meta = SelectedModelMeta(
         selected_model_name=selected_model_name,
         model_artifact_dir=str(selected_model_dir.relative_to(output_dir)),
@@ -217,16 +212,29 @@ def _write_train_artifacts(
         if artifact_payload is None:
             raise ValueError(f"Missing artifact payload '{artifact_name}' for selected model: {selected_model_name}")
         np.save(selected_model_dir / f"{artifact_name}.npy", artifact_payload)
-    selected_model_meta = SelectedModelMeta(
-        selected_model_name=selected_model_meta.selected_model_name,
-        model_artifact_dir=selected_model_meta.model_artifact_dir,
-        shared_context_path=selected_model_meta.shared_context_path,
-        evaluation_top_k=selected_model_meta.evaluation_top_k,
-        artifact_files=[f"{artifact_name}.npy" for artifact_name in artifact_names],
+    write_json(
+        output_dir / "selected_model_meta.json",
+        _selected_model_meta_payload(
+            SelectedModelMeta(
+                selected_model_name=selected_model_meta.selected_model_name,
+                model_artifact_dir=selected_model_meta.model_artifact_dir,
+                shared_context_path=selected_model_meta.shared_context_path,
+                evaluation_top_k=selected_model_meta.evaluation_top_k,
+                artifact_files=[f"{artifact_name}.npy" for artifact_name in artifact_names],
+            )
+        ),
     )
-    write_json(output_dir / "selected_model_meta.json", _selected_model_meta_payload(selected_model_meta))
 
-    # ===== Persist Offline Metric Summaries =====
+
+def _write_offline_metric_summaries(
+    output_dir: Path,
+    *,
+    context: TrainArtifactContext,
+    selection: SelectionArtifactOutputs,
+) -> None:
+    """What: Persist validation/test retrieval metrics and the train-stage summary JSON.
+    Why: Keeps metric/report output details separate from model artifact persistence.
+    """
     write_json(
         output_dir / "validation_retrieval_metrics.json",
         _retrieval_metrics_payload(
@@ -240,17 +248,42 @@ def _write_train_artifacts(
     write_json(
         output_dir / "train_metrics.json",
         {
-            "input_splits_path": str(context.split_path),
-            "selected_model_name": selected_model_name,
+            "selected_model_name": selection.selected_model_name,
             "selection_rule": f"maximize_validation_Recall@{context.evaluation_top_k}",
             "k_value": context.evaluation_top_k,
-            "counts": {
-                "users_total": len(context.user_ids),
-                "items_train_universe": len(context.item_ids),
-                "train_users": len(context.train),
-                "validation_users": len(context.validation),
-                "test_users": len(context.test),
-            },
             "model_config": context.model_config,
         },
     )
+
+
+def _write_train_artifacts(
+    output_dir: Path,
+    *,
+    context: TrainArtifactContext,
+    candidate_artifacts: CandidateModelArtifactOutputs,
+    selection: SelectionArtifactOutputs,
+) -> None:
+    """What: Persist selected-model artifacts and training/evaluation metric artifacts.
+    Why: Centralizes output schema so the training-stage orchestrator stays focused on model-flow logic.
+    """
+    # ===== Prepare Output Directories =====
+    output_dir.mkdir(parents=True, exist_ok=True)
+    models_root = output_dir / "models"
+    selected_model_name = selection.selected_model_name
+    selected_model_dir = models_root / selected_model_name
+    selected_model_dir.mkdir(parents=True, exist_ok=True)
+
+    # ===== Persist Shared Runtime Context =====
+    _write_shared_runtime_context(output_dir, context)
+
+    # ===== Persist Selected Model Artifacts =====
+    _write_selected_model_artifacts(
+        output_dir,
+        selected_model_dir=selected_model_dir,
+        context=context,
+        candidate_artifacts=candidate_artifacts,
+        selection=selection,
+    )
+
+    # ===== Persist Offline Metric Summaries =====
+    _write_offline_metric_summaries(output_dir, context=context, selection=selection)
