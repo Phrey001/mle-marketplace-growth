@@ -21,6 +21,7 @@ from mle_marketplace_growth.recommender.constants import (
     ALLOWED_MF_WEIGHTINGS,
     DEVICE,
     EARLY_STOP_METRIC,
+    EVALUATION_TOP_K,
     MF_ALGORITHM,
     MODEL_NAMES,
     NORMALIZE_EMBEDDINGS,
@@ -46,8 +47,6 @@ class RecommenderTrainParams:
     early_stop_k: int
     early_stop_tolerance: float
     temperature: float
-    tower_hidden_dim: int
-    tower_dropout: float
     mf_components: int
     mf_n_iter: int
     mf_weighting: str
@@ -67,14 +66,14 @@ class ModelSelectionResult:
     validation_metrics: list[dict]
     test_metrics: list[dict]
     selected_model_name: str
-    select_k: int
 
 
-def _load_train_params(cfg: dict) -> tuple[RecommenderTrainParams, list[int]]:
-    """What: Read train-time hyperparameters from config.
-    Why: Centralizes key parsing so run_train stays focused on pipeline flow.
+def _load_train_params(cfg: dict) -> RecommenderTrainParams:
+    """What: Parse train-time hyperparameters from config into one typed object.
+    Why: Centralizes config-field reading so run_train stays focused on pipeline flow;
+    semantic and filesystem validation happens separately in `_validate_train_inputs`.
     """
-    params = RecommenderTrainParams(
+    return RecommenderTrainParams(
         embedding_dim=int(cfg_required(cfg, "embedding_dim")),
         epochs=int(cfg_required(cfg, "epochs")),
         learning_rate=float(cfg_required(cfg, "learning_rate")),
@@ -86,25 +85,19 @@ def _load_train_params(cfg: dict) -> tuple[RecommenderTrainParams, list[int]]:
         early_stop_k=int(cfg_required(cfg, "early_stop_k")),
         early_stop_tolerance=float(cfg_required(cfg, "early_stop_tolerance")),
         temperature=float(cfg_required(cfg, "temperature")),
-        tower_hidden_dim=int(cfg_required(cfg, "tower_hidden_dim")),
-        tower_dropout=float(cfg_required(cfg, "tower_dropout")),
         mf_components=int(cfg_required(cfg, "mf_components")),
         mf_n_iter=int(cfg_required(cfg, "mf_n_iter")),
         mf_weighting=str(cfg_required(cfg, "mf_weighting")),
     )
-    top_ks_raw = str(cfg_required(cfg, "top_ks"))
-    top_ks = sorted({int(value.strip()) for value in top_ks_raw.split(",") if value.strip()})
-    return params, top_ks
 
 
 def _validate_train_inputs(
     split_path,
     user_index_path,
     item_index_path,
-    top_ks: list[int],
     train_params: RecommenderTrainParams,
 ) -> None:
-    """What: Validate file inputs and key training parameter constraints.
+    """What: Validate filesystem inputs and semantic training preconditions after config parsing.
     Why: Fails fast with focused error messages before model training starts.
     """
     if not split_path.exists():
@@ -113,36 +106,34 @@ def _validate_train_inputs(
         raise FileNotFoundError(f"User index parquet not found: {user_index_path}")
     if not item_index_path.exists():
         raise FileNotFoundError(f"Item index parquet not found: {item_index_path}")
-    if not top_ks:
-        raise ValueError("At least one K is required in top_ks config")
     if train_params.embedding_dim < 2:
         raise ValueError("embedding_dim must be >= 2")
+    if train_params.epochs < 1:
+        raise ValueError("epochs must be >= 1")
+    if train_params.learning_rate <= 0:
+        raise ValueError("learning_rate must be > 0")
+    if train_params.negative_samples < 0:
+        raise ValueError("negative_samples must be >= 0")
+    if train_params.batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+    if train_params.l2_reg < 0:
+        raise ValueError("l2_reg must be >= 0")
+    if train_params.max_grad_norm < 0:
+        raise ValueError("max_grad_norm must be >= 0")
+    if train_params.early_stop_rounds < 0:
+        raise ValueError("early_stop_rounds must be >= 0")
+    if train_params.early_stop_k < 1:
+        raise ValueError("early_stop_k must be >= 1")
+    if train_params.early_stop_tolerance < 0:
+        raise ValueError("early_stop_tolerance must be >= 0")
+    if train_params.temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    if train_params.mf_components < 2:
+        raise ValueError("mf_components must be >= 2")
+    if train_params.mf_n_iter < 1:
+        raise ValueError("mf_n_iter must be >= 1")
     if train_params.mf_weighting not in ALLOWED_MF_WEIGHTINGS:
         raise ValueError(f"mf_weighting must be one of {list(ALLOWED_MF_WEIGHTINGS)}")
-
-
-def _normalized_train_params(train_params: RecommenderTrainParams) -> RecommenderTrainParams:
-    """What: Apply deterministic bounds/casts used by training and artifact metadata.
-    Why: Keeps normalization logic in one place and avoids duplicated expressions.
-    """
-    return RecommenderTrainParams(
-        embedding_dim=train_params.embedding_dim,
-        epochs=train_params.epochs,
-        learning_rate=train_params.learning_rate,
-        negative_samples=train_params.negative_samples,
-        batch_size=max(1, int(train_params.batch_size)),
-        l2_reg=train_params.l2_reg,
-        max_grad_norm=max(0.0, float(train_params.max_grad_norm)),
-        early_stop_rounds=max(0, int(train_params.early_stop_rounds)),
-        early_stop_k=max(1, int(train_params.early_stop_k)),
-        early_stop_tolerance=max(0.0, float(train_params.early_stop_tolerance)),
-        temperature=float(train_params.temperature),
-        tower_hidden_dim=max(0, int(train_params.tower_hidden_dim)),
-        tower_dropout=max(0.0, float(train_params.tower_dropout)),
-        mf_components=train_params.mf_components,
-        mf_n_iter=train_params.mf_n_iter,
-        mf_weighting=train_params.mf_weighting,
-    )
 
 
 def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
@@ -158,12 +149,11 @@ def _train_candidate_models(
     validation: dict[str, set[str]],
     user_to_idx: dict[str, int],
     item_to_idx: dict[str, int],
-    normalized_train_params: RecommenderTrainParams,
+    train_params: RecommenderTrainParams,
 ) -> CandidateModelOutputs:
     """What: Train popularity, MF, and two-tower candidate models.
     Why: Encapsulates model-fit steps so run_train remains scan-friendly.
     """
-    params = normalized_train_params
     train_pairs = _interaction_pairs(train, user_to_idx, item_to_idx)
 
     # ===== Model: Popularity =====
@@ -175,14 +165,14 @@ def _train_candidate_models(
         train_pairs,
         user_count=len(user_to_idx),
         item_count=len(item_to_idx),
-        n_components=params.mf_components,
-        n_iter=params.mf_n_iter,
-        weighting=params.mf_weighting,
+        n_components=train_params.mf_components,
+        n_iter=train_params.mf_n_iter,
+        weighting=train_params.mf_weighting,
         algorithm=MF_ALGORITHM,
         tol=0.0,
     )
     print(
-        f"[recommender.train] trained mf baseline (components={params.mf_components}, n_iter={params.mf_n_iter}, weighting={params.mf_weighting}, algorithm={MF_ALGORITHM})"
+        f"[recommender.train] trained mf baseline (components={train_params.mf_components}, n_iter={train_params.mf_n_iter}, weighting={train_params.mf_weighting}, algorithm={MF_ALGORITHM})"
     )
 
     # ===== Model: Two-Tower =====
@@ -190,22 +180,20 @@ def _train_candidate_models(
         train,
         user_to_idx,
         item_to_idx,
-        embedding_dim=params.embedding_dim,
-        epochs=params.epochs,
-        learning_rate=params.learning_rate,
-        negative_samples=params.negative_samples,
-        batch_size=params.batch_size,
-        l2_reg=params.l2_reg,
-        max_grad_norm=params.max_grad_norm,
-        early_stop_rounds=params.early_stop_rounds,
+        embedding_dim=train_params.embedding_dim,
+        epochs=train_params.epochs,
+        learning_rate=train_params.learning_rate,
+        negative_samples=train_params.negative_samples,
+        batch_size=train_params.batch_size,
+        l2_reg=train_params.l2_reg,
+        max_grad_norm=train_params.max_grad_norm,
+        early_stop_rounds=train_params.early_stop_rounds,
         early_stop_metric=EARLY_STOP_METRIC,
-        early_stop_k=params.early_stop_k,
-        early_stop_tolerance=params.early_stop_tolerance,
+        early_stop_k=train_params.early_stop_k,
+        early_stop_tolerance=train_params.early_stop_tolerance,
         validation_interactions=validation,
-        temperature=params.temperature,
+        temperature=train_params.temperature,
         normalize_embeddings=NORMALIZE_EMBEDDINGS,
-        tower_hidden_dim=params.tower_hidden_dim,
-        tower_dropout=params.tower_dropout,
         device=DEVICE,
         verbose=True,
     )
@@ -228,7 +216,7 @@ def _evaluate_and_select_model(
     test: dict[str, set[str]],
     user_to_idx: dict[str, int],
     item_to_idx: dict[str, int],
-    top_ks: list[int],
+    evaluation_top_k: int,
     popularity: np.ndarray,
     mf_user: np.ndarray,
     mf_item: np.ndarray,
@@ -249,7 +237,7 @@ def _evaluate_and_select_model(
                 split_rows=split_rows,
                 user_to_idx=user_to_idx,
                 item_to_idx=item_to_idx,
-                top_ks=top_ks,
+                top_k=evaluation_top_k,
                 popularity=popularity,
                 mf_user=mf_user,
                 mf_item=mf_item,
@@ -261,36 +249,35 @@ def _evaluate_and_select_model(
         for split_name, split_rows in [("validation", validation), ("test", test)]
     }
     validation_metrics, test_metrics = metrics_by_split["validation"], metrics_by_split["test"]
-    select_k = 20 if 20 in top_ks else max(top_ks)
     for result in validation_metrics:
         print(
             "[recommender.train] validation:",
             result["model_name"],
-            f"Recall@{select_k}={result['metrics'].get(f'Recall@{select_k}', 0.0):.6f}",
+            f"Recall@{evaluation_top_k}={result['metrics'].get(f'Recall@{evaluation_top_k}', 0.0):.6f}",
         )
     selected_model_name = max(
         validation_metrics,
-        key=lambda result: result["metrics"].get(f"Recall@{select_k}", 0.0),
+        key=lambda result: result["metrics"].get(f"Recall@{evaluation_top_k}", 0.0),
     )["model_name"]
-    print(f"[recommender.train] selected_model={selected_model_name} by Recall@{select_k}")
+    print(f"[recommender.train] selected_model={selected_model_name} by Recall@{evaluation_top_k}")
     selected_test_row = next((result for result in test_metrics if result["model_name"] == selected_model_name), None)
     if selected_test_row is not None:
         print(
             "[recommender.train] test:",
             selected_model_name,
-            f"Recall@{select_k}={selected_test_row['metrics'].get(f'Recall@{select_k}', 0.0):.6f}",
+            f"Recall@{evaluation_top_k}={selected_test_row['metrics'].get(f'Recall@{evaluation_top_k}', 0.0):.6f}",
         )
     return ModelSelectionResult(
         validation_metrics=validation_metrics,
         test_metrics=test_metrics,
         selected_model_name=selected_model_name,
-        select_k=select_k,
     )
 
 
 def run_train(config_path: str, output_dir_override=None) -> None:
     """What: Train recommender candidates, select one model, and write artifacts.
-    Why: Provides in-process training entrypoint reused by pipeline and CLI.
+    Why: Provides the in-process training entrypoint reused by the CLI and pipeline;
+    `output_dir_override` exists for internal experiment utilities such as the tuning sweep.
     """
     # ===== Load Config =====
     runtime = load_recommender_runtime_config(config_path)
@@ -299,10 +286,9 @@ def run_train(config_path: str, output_dir_override=None) -> None:
     user_index_path = runtime.user_index_path
     item_index_path = runtime.item_index_path
     output_dir = output_dir_override if output_dir_override is not None else runtime.artifacts_dir
-    train_params, top_ks = _load_train_params(cfg)
+    train_params = _load_train_params(cfg)
     # ===== Validate Inputs =====
-    _validate_train_inputs(split_path, user_index_path, item_index_path, top_ks, train_params)
-    params = _normalized_train_params(train_params)
+    _validate_train_inputs(split_path, user_index_path, item_index_path, train_params)
 
     # ===== Load Inputs =====
     rows = _load_split_rows(split_path)
@@ -316,11 +302,11 @@ def run_train(config_path: str, output_dir_override=None) -> None:
     )
     print(
         "[recommender.train] config:",
-        f"embedding_dim={params.embedding_dim}, epochs={params.epochs}, lr={params.learning_rate}, negatives={params.negative_samples}, batch_size={params.batch_size}, l2={params.l2_reg}, max_grad_norm={params.max_grad_norm}",
+        f"embedding_dim={train_params.embedding_dim}, epochs={train_params.epochs}, lr={train_params.learning_rate}, negatives={train_params.negative_samples}, batch_size={train_params.batch_size}, l2={train_params.l2_reg}, max_grad_norm={train_params.max_grad_norm}",
     )
     print(
         "[recommender.train] convergence:",
-        f"early_stop_rounds={params.early_stop_rounds}, early_stop_metric={EARLY_STOP_METRIC}, early_stop_tolerance={params.early_stop_tolerance}, early_stop_k={params.early_stop_k}, temperature={params.temperature}, normalize_embeddings={NORMALIZE_EMBEDDINGS}, tower_hidden_dim={params.tower_hidden_dim}, tower_dropout={params.tower_dropout}, device={DEVICE}, mf_algorithm={MF_ALGORITHM}",
+        f"early_stop_rounds={train_params.early_stop_rounds}, early_stop_metric={EARLY_STOP_METRIC}, early_stop_tolerance={train_params.early_stop_tolerance}, early_stop_k={train_params.early_stop_k}, temperature={train_params.temperature}, normalize_embeddings={NORMALIZE_EMBEDDINGS}, device={DEVICE}, mf_algorithm={MF_ALGORITHM}",
     )
 
     # ===== Train Models =====
@@ -329,7 +315,7 @@ def run_train(config_path: str, output_dir_override=None) -> None:
         validation,
         user_to_idx,
         item_to_idx,
-        params,
+        train_params,
     )
 
     # ===== Evaluate Candidates =====
@@ -340,7 +326,7 @@ def run_train(config_path: str, output_dir_override=None) -> None:
         test,
         user_to_idx,
         item_to_idx,
-        top_ks,
+        EVALUATION_TOP_K,
         candidate_outputs.popularity,
         candidate_outputs.mf_user,
         candidate_outputs.mf_item,
@@ -352,8 +338,7 @@ def run_train(config_path: str, output_dir_override=None) -> None:
         output_dir,
         split_path=split_path,
         selected_model_name=selection.selected_model_name,
-        select_k=selection.select_k,
-        top_ks=top_ks,
+        evaluation_top_k=EVALUATION_TOP_K,
         user_ids=user_ids,
         item_ids=item_ids,
         user_to_idx=user_to_idx,
@@ -369,25 +354,23 @@ def run_train(config_path: str, output_dir_override=None) -> None:
         validation_metrics=selection.validation_metrics,
         test_metrics=selection.test_metrics,
         model_config={
-            "embedding_dim": params.embedding_dim,
-            "epochs": params.epochs,
-            "learning_rate": params.learning_rate,
-            "negative_samples": params.negative_samples,
-            "batch_size": params.batch_size,
-            "l2_reg": params.l2_reg,
-            "max_grad_norm": params.max_grad_norm,
-            "early_stop_rounds": params.early_stop_rounds,
+            "embedding_dim": train_params.embedding_dim,
+            "epochs": train_params.epochs,
+            "learning_rate": train_params.learning_rate,
+            "negative_samples": train_params.negative_samples,
+            "batch_size": train_params.batch_size,
+            "l2_reg": train_params.l2_reg,
+            "max_grad_norm": train_params.max_grad_norm,
+            "early_stop_rounds": train_params.early_stop_rounds,
             "early_stop_metric": EARLY_STOP_METRIC,
-            "early_stop_k": params.early_stop_k,
-            "early_stop_tolerance": params.early_stop_tolerance,
-            "temperature": params.temperature,
+            "early_stop_k": train_params.early_stop_k,
+            "early_stop_tolerance": train_params.early_stop_tolerance,
+            "temperature": train_params.temperature,
             "normalize_embeddings": NORMALIZE_EMBEDDINGS,
-            "tower_hidden_dim": params.tower_hidden_dim,
-            "tower_dropout": params.tower_dropout,
             "device": DEVICE,
-            "mf_components": params.mf_components,
-            "mf_n_iter": params.mf_n_iter,
-            "mf_weighting": params.mf_weighting,
+            "mf_components": train_params.mf_components,
+            "mf_n_iter": train_params.mf_n_iter,
+            "mf_weighting": train_params.mf_weighting,
             "mf_algorithm": MF_ALGORITHM,
             "mf_tol": 0.0,
             "popularity_transform": POPULARITY_TRANSFORM,

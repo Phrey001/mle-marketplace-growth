@@ -17,4 +17,4 @@ mf_components: 64
 mf_n_iter: 15
 mf_weighting: tfidf
 top_k: 20
-top_ks: 10,20
+top_ks: '20'

@@ -22,7 +22,7 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 | Candidate universe | Retrieval candidates are from train item universe |
 | Models compared | `popularity`, `mf`, `two_tower` |
 | Selection rule | Maximize validation `Recall@20` |
-| Required K | `K={10,20}` |
+| Required K | `K=20` |
 | ANN backend | FAISS HNSW inner-product index, fail-fast if unavailable |
 
 Datetime ownership/bounds:
@@ -46,19 +46,26 @@ Datetime ownership/bounds:
 |---|---|
 | Baseline hierarchy | Random floor (`K/N`) -> Popularity -> MF -> Two-tower |
 | MF implementation | `TruncatedSVD` over implicit interaction matrix |
+| Two-tower architecture | Embedding-only user tower and item tower (no hidden MLP layers) |
 | Two-tower objective | Contrastive cross-entropy with in-batch + sampled negatives |
 | Two-tower scoring | L2-normalized dot product (cosine-style); temperature applied in training logits |
 | Primary metric | `Recall@20` |
-| Guardrails | `NDCG@K`, `HitRate@K` |
+| Guardrails | `NDCG@20`, `HitRate@20` |
+
+Design note:
+- A deeper one-hidden-layer tower variant was considered earlier, but the current repo keeps embedding-only towers to avoid extra complexity without clear benefit for this demo implementation.
 
 Interaction signal:
-- Models use binary user-item interactions; each unique `(user, item)` pair is counted once.
+- Implemented models use binary user-item interactions: each unique `(user, item)` pair is counted once (duplicates collapsed; quantity ignored).
 - This is the standard implicit-feedback baseline used in many recommender systems.
-- Current training/evaluation does not use repeated-count or quantity weighting.
-- The feature-store gold tables still retain purchase quantity (`weight`) for potential future extensions that are out of scope for this repo:
-  - count-weighted interactions
-  - log-scaled interaction strength
-  - revenue-aware recommendation
+- Model-specific transformations are then applied to the interaction signals:
+  - Popularity: log-scaled counts of unique users interacting with each item
+  - MF: TF-IDF weighted interaction matrix
+  - Two-tower: uses binary pairs directly
+- Out of scope (dataset-specific): the feature-store gold tables still retain purchase quantity (`weight`) for potential future extensions:
+  - count-weighted interactions: repeated interactions increase signal strength (retain repeated user-item interactions; no deduplication; quantity used)
+  - log-scaled interaction strength: reduces the impact of extreme purchase quantities
+  - revenue-aware recommendation: prioritizes high-value transactions
 
 ## Artifact Contract
 

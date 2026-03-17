@@ -10,11 +10,10 @@ import pandas as pd
 
 from mle_marketplace_growth.helpers import cfg_required, generate_snapshot_dates, load_yaml_defaults, read_json
 from mle_marketplace_growth.purchase_propensity.constants import (
+    ALLOWED_FEATURE_LOOKBACK_WINDOWS,
     ALLOWED_PREDICTION_WINDOWS,
     DEFAULT_LOOKBACK_FOR_WINDOW_SWEEP,
-    SENSITIVITY_LOOKBACK_WINDOWS,
     SENSITIVITY_MODEL_NAMES,
-    SENSITIVITY_PREDICTION_WINDOWS,
     SPEND_CAP_QUANTILE,
 )
 from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
@@ -25,9 +24,9 @@ from mle_marketplace_growth.purchase_propensity.helpers.artifacts import (
 from mle_marketplace_growth.purchase_propensity.helpers.data import _read_parquet_panel
 from mle_marketplace_growth.purchase_propensity.train import run_training
 
-FIXED_WINDOWS = list(SENSITIVITY_PREDICTION_WINDOWS)
+FIXED_WINDOWS = sorted(ALLOWED_PREDICTION_WINDOWS)
 SENSITIVITY_MODELS = list(SENSITIVITY_MODEL_NAMES)
-LOOKBACK_SWEEP = list(SENSITIVITY_LOOKBACK_WINDOWS)
+LOOKBACK_SWEEP = sorted(ALLOWED_FEATURE_LOOKBACK_WINDOWS)
 
 
 def _load_train_metrics(metrics_path: Path) -> dict:

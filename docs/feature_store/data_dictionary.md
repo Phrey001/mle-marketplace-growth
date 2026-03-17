@@ -38,7 +38,7 @@ Domain: `Recommender`
 Purpose: positive user-item interaction events for recommender training and split derivation.  
 
 Grain: one row per positive user-item interaction event.
-Note: current recommender ML uses binary user-item interactions only; `weight` is retained for future extensions and is not used as a training weight today.
+Note: current recommender ML starts from binary user-item interactions only (each unique pair counted once; duplicates collapsed; quantity ignored). Popularity then applies log-scaled item interaction counts, MF applies TF-IDF weighting to the binary interaction matrix, and two-tower uses the binary pairs directly. `weight` is retained for future extensions and is not used as a direct training weight today.
 
 | Column | PK | Type | Nullable | Description | Source / Rule | Example |
 | --- | --- | --- | --- | --- | --- | --- |

@@ -146,8 +146,7 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
     selected_model = train_metrics.get("selected_model_name", "unknown")
     selection_rule = train_metrics.get("selection_rule", "")
     catalog_size = int(train_metrics.get("counts", {}).get("items_train_universe", 0))
-    k_values = [int(value) for value in train_metrics.get("k_values", []) if int(value) > 0]
-    anchor_k = 20 if 20 in k_values else (max(k_values) if k_values else 20)
+    anchor_k = int(train_metrics.get("k_value", 20))
     random_anchor = (anchor_k / catalog_size) if catalog_size > 0 else 0.0
 
     val_by_model = {row["model_name"]: row.get("metrics", {}) for row in validation_metrics.get("rows", [])}

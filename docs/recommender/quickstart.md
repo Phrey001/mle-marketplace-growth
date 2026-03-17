@@ -52,6 +52,23 @@ Update [analysis_report.md](/home/phrey/projects/mle-marketplace-growth/docs/rec
 
 Prescribed default path for this repo: steps **1) Build Features**, **2) Run Pipeline**, **3) Refresh Report Chart**, and **4) Update Analysis Report**.
 
+## Config Notes
+
+Use [default.yaml](/home/phrey/projects/mle-marketplace-growth/configs/recommender/default.yaml) as the single user-facing recommender config. The table below explains the less obvious defaults.
+
+| Key | Default | What | Why this default |
+|---|---:|---|---|
+| `recommender_min_event_date` | `2010-12-01` | lower bound for the interaction window | fixes one canonical demo training window start |
+| `recommender_max_event_date` | `2011-11-30` | upper bound for the interaction window | fixes one canonical demo training window end |
+| `embedding_dim` | `64` | size of the learned user/item vectors | strong enough for this demo without much extra runtime |
+| `negative_samples` | `8` | sampled non-purchased items per positive example | adds contrast without making training too heavy |
+| `batch_size` | `4096` | number of examples processed together in one optimization step | good CPU throughput for this dataset |
+| `early_stop_k` | `20` | validation cutoff used for early stopping | aligned to the repo's main selection metric |
+| `temperature` | `0.7` | sharpness of the two-tower training loss | slightly sharper than `1.0` without being too aggressive |
+| `mf_components` | `64` | size of the MF latent factor vectors | strong enough for this demo while staying fast |
+| `mf_weighting` | `tfidf` | MF preprocessing mode | reduces dominance of very popular items; allowed values: `binary`, `tfidf` |
+| `top_k` | `20` | number of items returned per user | standard shortlist depth for this demo |
+
 ## Optional ML Pipeline Steps
 
 Use the commands below only if you want to inspect or rerun the offline ML pipeline stages one at a time instead of the prescribed `run_pipeline.py` path.
@@ -118,7 +135,7 @@ It is optional low-priority experimentation and is not part of the main reportin
 | Sweep scope | two-tower challenger tuning only |
 | Trial generation | `trial_default` uses the current YAML values exactly; each `trial_i` applies one fixed two-tower override set on top of those YAML defaults |
 | Swept knobs | two-tower: `temperature`, `negative_samples`, `batch_size`, `early_stop_tolerance` |
-| Non-swept knobs | popularity and MF settings stay inherited from `configs/recommender/default.yaml` |
+| Non-swept knobs | popularity, MF, and fixed embedding-only two-tower architecture stay inherited from `configs/recommender/default.yaml` |
 | Baseline trial | `trial_default` runs first using the current YAML values as the two-tower baseline |
 | Tuning summary | reports overall best trial by selected-model `Recall@20` and best two-tower trial by two-tower validation `Recall@20` |
 | Output root | `artifacts/recommender/tuning/` |

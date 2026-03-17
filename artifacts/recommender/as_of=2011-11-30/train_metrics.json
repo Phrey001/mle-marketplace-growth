@@ -3,7 +3,6 @@
   "selected_model_name": "mf",
   "selection_rule": "maximize_validation_Recall@20",
   "k_values": [
-    10,
     20
   ],
   "counts": {

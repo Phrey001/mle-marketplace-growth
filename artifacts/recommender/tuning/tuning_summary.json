@@ -23,8 +23,8 @@
     "selected_model_name": "mf",
     "validation_recall_at_20": 0.05254,
     "test_recall_at_20": 0.043009,
-    "two_tower_validation_recall_at_20": 0.037397,
-    "two_tower_test_recall_at_20": 0.028312
+    "two_tower_validation_recall_at_20": 0.037291,
+    "two_tower_test_recall_at_20": 0.028564
   },
   "best_two_tower_trial": {
     "trial_name": "trial_6",
@@ -49,8 +49,8 @@
     "selected_model_name": "mf",
     "validation_recall_at_20": 0.05254,
     "test_recall_at_20": 0.043009,
-    "two_tower_validation_recall_at_20": 0.039009,
-    "two_tower_test_recall_at_20": 0.02856
+    "two_tower_validation_recall_at_20": 0.039131,
+    "two_tower_test_recall_at_20": 0.029236
   },
   "trials": [
     {
@@ -76,8 +76,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037397,
-      "two_tower_test_recall_at_20": 0.028312
+      "two_tower_validation_recall_at_20": 0.037291,
+      "two_tower_test_recall_at_20": 0.028564
     },
     {
       "trial_name": "trial_1",
@@ -102,8 +102,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.038183,
-      "two_tower_test_recall_at_20": 0.028415
+      "two_tower_validation_recall_at_20": 0.039075,
+      "two_tower_test_recall_at_20": 0.028779
     },
     {
       "trial_name": "trial_2",
@@ -128,8 +128,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.035122,
-      "two_tower_test_recall_at_20": 0.028485
+      "two_tower_validation_recall_at_20": 0.035424,
+      "two_tower_test_recall_at_20": 0.029146
     },
     {
       "trial_name": "trial_3",
@@ -154,8 +154,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037234,
-      "two_tower_test_recall_at_20": 0.02878
+      "two_tower_validation_recall_at_20": 0.037228,
+      "two_tower_test_recall_at_20": 0.028051
     },
     {
       "trial_name": "trial_4",
@@ -180,8 +180,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037546,
-      "two_tower_test_recall_at_20": 0.027247
+      "two_tower_validation_recall_at_20": 0.035892,
+      "two_tower_test_recall_at_20": 0.027326
     },
     {
       "trial_name": "trial_5",
@@ -206,8 +206,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037397,
-      "two_tower_test_recall_at_20": 0.028312
+      "two_tower_validation_recall_at_20": 0.037291,
+      "two_tower_test_recall_at_20": 0.028564
     },
     {
       "trial_name": "trial_6",
@@ -232,8 +232,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.039009,
-      "two_tower_test_recall_at_20": 0.02856
+      "two_tower_validation_recall_at_20": 0.039131,
+      "two_tower_test_recall_at_20": 0.029236
     },
     {
       "trial_name": "trial_7",
@@ -258,8 +258,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037915,
-      "two_tower_test_recall_at_20": 0.027774
+      "two_tower_validation_recall_at_20": 0.03835,
+      "two_tower_test_recall_at_20": 0.02804
     },
     {
       "trial_name": "trial_8",
@@ -284,8 +284,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.038358,
-      "two_tower_test_recall_at_20": 0.027864
+      "two_tower_validation_recall_at_20": 0.038991,
+      "two_tower_test_recall_at_20": 0.027809
     }
   ]
 }

@@ -1,27 +1,24 @@
 # Event window (applies to full recommender pipeline)
-recommender_min_event_date: "2010-12-01" # lower bound for interaction events used by all models
-recommender_max_event_date: "2011-11-30" # upper bound for interaction events used by all models
+recommender_min_event_date: "2010-12-01" # canonical demo training window start
+recommender_max_event_date: "2011-11-30" # canonical demo training window end
 
 # Two-tower model params (PyTorch retrieval model only)
-embedding_dim: 64 # larger than 32 with practical runtime for this dataset
-epochs: 12 # relies on early stopping to cap runtime
-learning_rate: 0.003 # stable AdamW setting
-negative_samples: 8 # adds contrastive signal for ranking
-batch_size: 4096 # good CPU throughput without high memory pressure
+embedding_dim: 64 # learned vector size
+epochs: 12 # max training passes
+learning_rate: 0.003 # neural training step size
+negative_samples: 8 # sampled negatives per positive example
+batch_size: 4096 # training examples per optimization step
 l2_reg: 0.0001 # light regularization
-max_grad_norm: 1.0 # gradient clipping (0 disables clipping)
-early_stop_rounds: 4 # stop after this many non-improving epochs
-early_stop_k: 20 # K used for early-stop metric
+max_grad_norm: 1.0 # gradient clipping limit (0 disables clipping)
+early_stop_rounds: 4 # non-improving validation rounds before stop
+early_stop_k: 20 # validation cutoff used for early stopping
 early_stop_tolerance: 0.0001 # minimum improvement to count as progress
-temperature: 0.7 # softmax sharpening
-tower_hidden_dim: 0 # embedding-only towers; set >0 to enable MLP towers experimentally
-tower_dropout: 0.0 # applies only when tower_hidden_dim > 0
+temperature: 0.7 # sharpness of two-tower training loss
 
 # MF baseline params (TruncatedSVD baseline only)
-mf_components: 64 # stronger than 32 while still fast
-mf_n_iter: 15 # stable SVD fit for this demo scale
-mf_weighting: "tfidf" # downweights head items
+mf_components: 64 # MF latent factor size
+mf_n_iter: 15 # SVD optimization iterations
+mf_weighting: "tfidf" # allowed: binary|tfidf
 
 # Evaluation + serving params (applies after model training)
-top_k: 20 # serving depth for candidate retrieval
-top_ks: "10,20" # evaluation cutoffs
+top_k: 20 # number of items returned per user

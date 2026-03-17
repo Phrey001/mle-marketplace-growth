@@ -38,6 +38,11 @@ def _load_split_rows(path: Path) -> pd.DataFrame:
     missing = sorted(required - set(rows_df.columns))
     if missing:
         raise ValueError(f"Missing required columns in split dataset: {missing}")
+    observed_splits = set(rows_df["split"].astype(str).str.strip().str.lower())
+    allowed_splits = {"train", "val", "test"}
+    if not observed_splits.issubset(allowed_splits):
+        invalid_splits = sorted(observed_splits - allowed_splits)
+        raise ValueError(f"Invalid split values in split dataset: {invalid_splits}")
     return rows_df
 
 
@@ -46,31 +51,45 @@ def _validate_split_chronology(rows_df: pd.DataFrame) -> None:
     Why: Prevents temporal leakage after the feature store assigns invoice-level
     chronological splits and all line items inherit that split.
     """
-    normalized_df = rows_df.copy()
-    normalized_df["split_norm"] = normalized_df["split"].astype(str).str.strip().str.lower().replace({"validation": "val"})
-    normalized_df = normalized_df[normalized_df["split_norm"].isin({"train", "val", "test"})]
-    if normalized_df.empty:
+    if rows_df.empty:
         return
 
-    normalized_df["event_ts"] = pd.to_datetime(normalized_df["event_ts"], errors="coerce")
-    if normalized_df["event_ts"].isna().any():
+    split_rows_df = rows_df.copy()
+    split_rows_df["event_ts"] = pd.to_datetime(split_rows_df["event_ts"], errors="coerce")
+    if split_rows_df["event_ts"].isna().any():
         raise ValueError("Invalid event_ts in split dataset; failed to parse datetime.")
 
-    violations = 0
-    for _, user_df in normalized_df.groupby("user_id", sort=False):
-        train_ts = user_df.loc[user_df["split_norm"] == "train", "event_ts"]
-        val_ts = user_df.loc[user_df["split_norm"] == "val", "event_ts"]
-        test_ts = user_df.loc[user_df["split_norm"] == "test", "event_ts"]
-        if train_ts.empty or val_ts.empty or test_ts.empty:
-            continue
-        if train_ts.max() > val_ts.min():
-            violations += 1
-        if train_ts.max() > test_ts.min():
-            violations += 1
-        if val_ts.min() > test_ts.min():
-            violations += 1
-    if violations > 0:
-        raise ValueError(f"Split chronology violation detected: {violations} user-level ordering violations.")
+    # Collapse each user's rows into one summary row:
+    # user_id | max_event_ts_train | min_event_ts_val | max_event_ts_val | min_event_ts_test
+    # The chronology rule is then: train_end <= val_start and val_end <= test_start.
+    per_user_split_bounds_df = (
+        split_rows_df.groupby(["user_id", "split"], sort=False)["event_ts"]
+        .agg(min_event_ts="min", max_event_ts="max")
+        .unstack("split")
+    )
+    per_user_split_bounds_df.columns = [
+        f"{agg_name}_{split_name}"
+        for agg_name, split_name in per_user_split_bounds_df.columns.to_flat_index()
+    ]
+
+    required_split_bounds = {
+        "max_event_ts_train",
+        "min_event_ts_val",
+        "max_event_ts_val",
+        "min_event_ts_test",
+    }
+    if not required_split_bounds.issubset(per_user_split_bounds_df.columns):
+        return
+
+    users_with_train_val_test_df = per_user_split_bounds_df.dropna(subset=sorted(required_split_bounds))
+    users_with_invalid_split_order = (
+        (users_with_train_val_test_df["max_event_ts_train"] > users_with_train_val_test_df["min_event_ts_val"])
+        | (users_with_train_val_test_df["max_event_ts_val"] > users_with_train_val_test_df["min_event_ts_test"])
+    )
+    if users_with_invalid_split_order.any():
+        raise ValueError(
+            "Split chronology violation detected: expected train_end <= val_start and val_end <= test_start per user."
+        )
 
 
 def _build_interactions(rows_df: pd.DataFrame) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
@@ -78,16 +97,15 @@ def _build_interactions(rows_df: pd.DataFrame) -> tuple[dict[str, set[str]], dic
     Why: Provides compact structures for model training and metric evaluation
     after invoice-level split decisions have already been assigned upstream.
     """
-    normalized_df = rows_df[["user_id", "item_id", "split"]].copy()
-    normalized_df["split_norm"] = normalized_df["split"].astype(str).str.strip().str.lower().replace({"validation": "val"})
+    split_rows_df = rows_df[["user_id", "item_id", "split"]].copy()
 
     def _interaction_map(split_values: set[str]) -> dict[str, set[str]]:
-        split_df = normalized_df[normalized_df["split_norm"].isin(split_values)]
+        split_df = split_rows_df[split_rows_df["split"].isin(split_values)]
         grouped = split_df.groupby("user_id", sort=False)["item_id"].agg(lambda items: set(items.tolist()))
         return grouped.to_dict()
 
     train = _interaction_map({"train"})
-    validation = _interaction_map({"validation", "val"})
+    validation = _interaction_map({"val"})
     test = _interaction_map({"test"})
     if not train:
         raise ValueError("No train interactions found.")

@@ -77,7 +77,6 @@ def main() -> None:
 
     output_root = Path("artifacts") / "recommender" / "tuning"
     output_root.mkdir(parents=True, exist_ok=True)
-    top_ks = str(cfg_required(config_payload, "top_ks"))
     default_cfg = {
         "embedding_dim": int(cfg_required(config_payload, "embedding_dim")),
         "epochs": int(cfg_required(config_payload, "epochs")),
@@ -90,8 +89,6 @@ def main() -> None:
         "early_stop_k": int(cfg_required(config_payload, "early_stop_k")),
         "early_stop_tolerance": float(cfg_required(config_payload, "early_stop_tolerance")),
         "temperature": float(cfg_required(config_payload, "temperature")),
-        "tower_hidden_dim": int(cfg_required(config_payload, "tower_hidden_dim")),
-        "tower_dropout": float(cfg_required(config_payload, "tower_dropout")),
         "mf_components": int(cfg_required(config_payload, "mf_components")),
         "mf_n_iter": int(cfg_required(config_payload, "mf_n_iter")),
         "mf_weighting": str(cfg_required(config_payload, "mf_weighting")),
@@ -108,7 +105,6 @@ def main() -> None:
         trial_config = {
             **config_payload,
             **trial_overrides,
-            "top_ks": top_ks,
         }
         trial_config_path = trial_dir / "trial_config.yaml"
         trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")

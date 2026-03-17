@@ -102,7 +102,7 @@ Validation summary status:
 - Current default candidate: `mf`.
 - Keep ranking by offline `Recall@20` for structural model selection consistency.
 - Keep quickstart workflow as source-of-truth reproducibility path.
-- Two-tower experimentation: model depth was increased experimentally (one hidden layer per tower + ReLU + dropout + L2 normalization), but empirical gains were not sufficient to justify added complexity; keep embedding-only towers as default.
+- Two-tower architecture: keep the simpler embedding-only towers as the repo default; extra hidden-layer tower variants are out of scope for the current implementation.
 
 ## 6) Plots (Optional)
 One model comparison bar chart for `Recall@20` (validation and test) across `popularity`, `mf`, `two_tower`.

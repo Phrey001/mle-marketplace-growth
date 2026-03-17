@@ -9,7 +9,7 @@ import numpy as np
 Workflow Steps:
 1) For each user, build candidate items excluding train-seen items.
 2) Score candidates with one model family (popularity / MF / two-tower).
-3) Rank top-K items for each configured K.
+3) Rank top-K items for the configured cutoff.
 4) Accumulate Recall@K, NDCG@K, and HitRate@K.
 5) Average metrics across eligible users.
 
@@ -52,20 +52,20 @@ def _evaluate_model(
     split_rows: dict[str, set[str]],
     user_to_idx: dict[str, int],
     item_to_idx: dict[str, int],
-    top_ks: list[int],
+    top_k: int,
     popularity: np.ndarray,
     mf_user: np.ndarray,
     mf_item: np.ndarray,
     tt_user: np.ndarray,
     tt_item: np.ndarray,
 ) -> dict:
-    """What: Evaluate one model family on one split across configured K cutoffs.
+    """What: Evaluate one model family on one split at the configured K cutoff.
     Why: Produces comparable offline retrieval metrics for model selection.
 
     Pipeline:
     1) Build eligible user candidate pools (`_user_eval_pool`).
     2) Score candidate items for the selected model family.
-    3) Accumulate Recall/NDCG/HitRate at each K.
+    3) Accumulate Recall/NDCG/HitRate at K.
     4) Finalize averaged metrics for this model/split row.
     """
     # ===== Inner Helper Step 1: Build Eligible User Pool =====
@@ -100,18 +100,17 @@ def _evaluate_model(
             return np.asarray(tt_item[candidate_item_indices].dot(tt_user[user_index]))
         raise ValueError(f"Unsupported model: {model_name}")
 
-    # ===== Inner Helper Step 3: Accumulate Per-K Metrics =====
-    def _accumulate_ranking_metrics_for_k(
-        metric_sums: dict[int, dict[str, float]],
+    # ===== Inner Helper Step 3: Accumulate Metrics =====
+    def _accumulate_ranking_metrics(
+        metric_sums: dict[str, float],
         *,
-        k: int,
         candidate_item_indices: list[int],
         ground_truth_indices: set[int],
         candidate_scores: np.ndarray,
         item_count: int,
     ) -> None:
-        """What: Update Recall/NDCG/HitRate sums for one K value.
-        Why: Keeps per-K aggregation local to this evaluation flow.
+        """What: Update Recall/NDCG/HitRate sums at the configured K value.
+        Why: Keeps metric aggregation local to this evaluation flow.
         """
         def _ndcg_at_k(ranked_item_indices: list[int], ground_truth_indices: set[int], k: int) -> float:
             """What: Compute NDCG@k for one ranked list and ground-truth set.
@@ -127,34 +126,30 @@ def _evaluate_model(
             idcg = sum(1.0 / math.log2(idx + 1) for idx in range(1, ideal_hits + 1))
             return dcg / idcg if idcg > 0 else 0.0
 
-        effective_k = min(k, len(candidate_item_indices), item_count)
+        effective_k = min(top_k, len(candidate_item_indices), item_count)
         top_local_indices = _top_k_indices(candidate_scores, effective_k)
         ranked_item_indices = [candidate_item_indices[idx] for idx in top_local_indices]
         hits = len(set(ranked_item_indices).intersection(ground_truth_indices))
-        metric_sums[k]["recall"] += hits / len(ground_truth_indices)
-        metric_sums[k]["hit_rate"] += 1.0 if hits > 0 else 0.0
-        metric_sums[k]["ndcg"] += _ndcg_at_k(ranked_item_indices, ground_truth_indices, effective_k)
+        metric_sums["recall"] += hits / len(ground_truth_indices)
+        metric_sums["hit_rate"] += 1.0 if hits > 0 else 0.0
+        metric_sums["ndcg"] += _ndcg_at_k(ranked_item_indices, ground_truth_indices, effective_k)
 
     # ===== Inner Helper Step 4: Finalize Output Metrics =====
-    def _finalize_metrics(metric_sums: dict[int, dict[str, float]], top_ks: list[int], eligible_users: int) -> dict:
+    def _finalize_metrics(metric_sums: dict[str, float], eligible_users: int) -> dict:
         """What: Convert aggregated metric sums into averaged metric payload.
         Why: Finalizes one model/split evaluation row.
         """
-        metrics = {}
-        for k in top_ks:
-            if eligible_users == 0:
-                metrics[f"Recall@{k}"] = 0.0
-                metrics[f"NDCG@{k}"] = 0.0
-                metrics[f"HitRate@{k}"] = 0.0
-                continue
-            metrics[f"Recall@{k}"] = round(metric_sums[k]["recall"] / eligible_users, 6)
-            metrics[f"NDCG@{k}"] = round(metric_sums[k]["ndcg"] / eligible_users, 6)
-            metrics[f"HitRate@{k}"] = round(metric_sums[k]["hit_rate"] / eligible_users, 6)
-        return metrics
+        if eligible_users == 0:
+            return {f"Recall@{top_k}": 0.0, f"NDCG@{top_k}": 0.0, f"HitRate@{top_k}": 0.0}
+        return {
+            f"Recall@{top_k}": round(metric_sums["recall"] / eligible_users, 6),
+            f"NDCG@{top_k}": round(metric_sums["ndcg"] / eligible_users, 6),
+            f"HitRate@{top_k}": round(metric_sums["hit_rate"] / eligible_users, 6),
+        }
 
     # ===== Init Aggregation =====
     # This function evaluates exactly one model family (`model_name`) per call.
-    metric_sums = {k: {"recall": 0.0, "ndcg": 0.0, "hit_rate": 0.0} for k in top_ks}
+    metric_sums = {"recall": 0.0, "ndcg": 0.0, "hit_rate": 0.0}
     eligible_users = 0
     item_count = len(item_to_idx)
 
@@ -171,17 +166,15 @@ def _evaluate_model(
         candidate_scores = _score_candidates_for_model(candidate_item_indices, user_index)
         # candidate_scores shape: [num_candidates]
 
-        # Step 3: Aggregate Recall/NDCG/HitRate at each configured K.
-        for k in top_ks:
-            _accumulate_ranking_metrics_for_k(
-                metric_sums,
-                k=k,
-                candidate_item_indices=candidate_item_indices,
-                ground_truth_indices=ground_truth_indices,
-                candidate_scores=candidate_scores,
-                item_count=item_count,
-            )
+        # Step 3: Aggregate Recall/NDCG/HitRate at the configured K.
+        _accumulate_ranking_metrics(
+            metric_sums,
+            candidate_item_indices=candidate_item_indices,
+            ground_truth_indices=ground_truth_indices,
+            candidate_scores=candidate_scores,
+            item_count=item_count,
+        )
 
     # Step 4: Finalize averaged metrics for this model/split row.
-    metrics = _finalize_metrics(metric_sums, top_ks, eligible_users)
+    metrics = _finalize_metrics(metric_sums, eligible_users)
     return {"model_name": model_name, "eligible_users": eligible_users, "metrics": metrics}

@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import nn
 from sklearn.decomposition import TruncatedSVD
 
 """Model-training helpers for recommender candidate families.
@@ -17,13 +16,13 @@ Workflow Steps:
 
 Conceptual view of `_train_two_tower`:
 1) Turn each user/item id into a dense vector ("embedding").
-2) Pass embeddings through identity or configured MLP towers.
+2) Use those embedding vectors directly as the user/item towers.
 3) Make user vector close to purchased item vector, far from non-purchased ones.
 4) Repeat in mini-batches, then export final vectors to numpy.
 
 PyTorch quick glossary:
 - embedding table: learnable lookup matrix from ids -> dense vectors.
-- tower: identity map or configured MLP applied after raw embeddings.
+- tower: the user or item embedding path used for scoring.
 - logits: similarity scores before loss normalization.
 - in-batch negatives: other positives in the same batch used as negatives.
 """
@@ -127,8 +126,6 @@ def _train_two_tower(
     validation_interactions: dict[str, set[str]] | None = None,
     temperature: float = 1.0,
     normalize_embeddings: bool = True,
-    tower_hidden_dim: int = 0,
-    tower_dropout: float = 0.0,
     device: str = "auto",
     verbose: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -140,46 +137,24 @@ def _train_two_tower(
     - Output is two matrices: one user embedding matrix and one item embedding matrix.
     - Training goal is ranking quality (retrieval), not direct rating prediction.
     """
-    def _init_two_tower_components() -> tuple[nn.Module, nn.Module, nn.Module, nn.Module, torch.optim.Optimizer, nn.Module]:
-        """What: Initialize embeddings, towers, optimizer, and loss module.
+    def _init_two_tower_components() -> tuple[nn.Module, nn.Module, torch.optim.Optimizer, nn.Module]:
+        """What: Initialize embedding tables, optimizer, and loss module.
         Why: Keeps setup logic separate from training-loop logic for readability.
         """
         user_embedding_table = torch.nn.Embedding(len(user_to_idx), embedding_dim).to(device_obj)
         item_embedding_table = torch.nn.Embedding(len(item_to_idx), embedding_dim).to(device_obj)
-        user_tower_net = (
-            nn.Sequential(
-                nn.Linear(embedding_dim, tower_hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(max(0.0, tower_dropout)),
-                nn.Linear(tower_hidden_dim, embedding_dim),
-            ).to(device_obj)
-            if tower_hidden_dim > 0
-            else nn.Identity()
-        )
-        item_tower_net = (
-            nn.Sequential(
-                nn.Linear(embedding_dim, tower_hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(max(0.0, tower_dropout)),
-                nn.Linear(tower_hidden_dim, embedding_dim),
-            ).to(device_obj)
-            if tower_hidden_dim > 0
-            else nn.Identity()
-        )
         with torch.no_grad():
             user_embedding_table.weight.normal_(mean=0.0, std=0.05)
             item_embedding_table.weight.normal_(mean=0.0, std=0.05)
 
         optimizer_obj = torch.optim.AdamW(
             list(user_embedding_table.parameters())
-            + list(item_embedding_table.parameters())
-            + list(user_tower_net.parameters())
-            + list(item_tower_net.parameters()),
+            + list(item_embedding_table.parameters()),
             lr=learning_rate,
             weight_decay=l2_reg if l2_reg > 0 else 0.0,
         )
         loss_module = torch.nn.CrossEntropyLoss()
-        return user_embedding_table, item_embedding_table, user_tower_net, item_tower_net, optimizer_obj, loss_module
+        return user_embedding_table, item_embedding_table, optimizer_obj, loss_module
 
     # ===== Step 1: Reproducibility =====
     np_rng = np.random.default_rng(42)
@@ -205,8 +180,6 @@ def _train_two_tower(
     (
         user_embedding_table,
         item_embedding_table,
-        user_tower,
-        item_tower,
         optimizer,
         loss_fn,
     ) = _init_two_tower_components()
@@ -243,9 +216,7 @@ def _train_two_tower(
         if not validation_user_indices:
             return 0.0
         with torch.no_grad():
-            user_tower.eval()
-            item_tower.eval()
-            item_embedding_matrix = item_tower(item_embedding_table.weight.detach())  # [I, D]
+            item_embedding_matrix = item_embedding_table.weight.detach()  # [I, D]
             if normalize_embeddings:
                 item_embedding_matrix = F.normalize(item_embedding_matrix, p=2, dim=1)
             k = min(max(1, early_stop_k), item_embedding_matrix.shape[0])
@@ -253,7 +224,7 @@ def _train_two_tower(
             recall_sum = 0.0
             for start in range(0, len(validation_user_indices), batch_eval_size):
                 end = min(start + batch_eval_size, len(validation_user_indices))
-                user_embeddings_batch = user_tower(user_embedding_table.weight[validation_user_indices[start:end]].detach())  # [B, D]
+                user_embeddings_batch = user_embedding_table.weight[validation_user_indices[start:end]].detach()  # [B, D]
                 if normalize_embeddings:
                     user_embeddings_batch = F.normalize(user_embeddings_batch, p=2, dim=1)
                 similarity_scores = (user_embeddings_batch @ item_embedding_matrix.T) / float(temperature)  # [B, I]
@@ -265,8 +236,6 @@ def _train_two_tower(
                     target_indices = validation_target_indices[start + row_idx]
                     hits = len(target_indices.intersection(ranked))
                     recall_sum += hits / max(1, len(target_indices))
-            user_tower.train()
-            item_tower.train()
             return recall_sum / len(validation_user_indices)
 
     # ===== Step 6: Train in Mini-Batches =====
@@ -275,8 +244,6 @@ def _train_two_tower(
     # - Append sampled negative item vectors when configured (negative_samples > 0).
     # - Optimize cross-entropy so each row prefers its own positive item.
     for epoch in range(1, epochs + 1):
-        user_tower.train()
-        item_tower.train()
         np_rng.shuffle(positive_array)
         epoch_loss_sum = 0.0
         epoch_steps = 0
@@ -286,8 +253,8 @@ def _train_two_tower(
                 continue
             batch_users = torch.from_numpy(batch_pos[:, 0]).long().to(device_obj)
             batch_positive_items = torch.from_numpy(batch_pos[:, 1]).long().to(device_obj)
-            user_embeddings_batch = user_tower(user_embedding_table(batch_users))  # [B, D]
-            positive_item_embeddings_batch = item_tower(item_embedding_table(batch_positive_items))  # [B, D]
+            user_embeddings_batch = user_embedding_table(batch_users)  # [B, D]
+            positive_item_embeddings_batch = item_embedding_table(batch_positive_items)  # [B, D]
             if normalize_embeddings:
                 user_embeddings_batch = F.normalize(user_embeddings_batch, p=2, dim=1)
                 positive_item_embeddings_batch = F.normalize(positive_item_embeddings_batch, p=2, dim=1)
@@ -298,7 +265,7 @@ def _train_two_tower(
                 sampled_negative_items = torch.from_numpy(
                     np_rng.integers(0, len(item_to_idx), size=(len(batch_users), negative_samples), dtype=np.int64)
                 ).long().to(device_obj)
-                negative_item_embeddings_batch = item_tower(item_embedding_table(sampled_negative_items))  # [B, N, D]
+                negative_item_embeddings_batch = item_embedding_table(sampled_negative_items)  # [B, N, D]
                 if normalize_embeddings:
                     negative_item_embeddings_batch = F.normalize(negative_item_embeddings_batch, p=2, dim=2)
                 sampled_negative_logits = (
@@ -312,9 +279,7 @@ def _train_two_tower(
             if max_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(
                     list(user_embedding_table.parameters())
-                    + list(item_embedding_table.parameters())
-                    + list(user_tower.parameters())
-                    + list(item_tower.parameters()),
+                    + list(item_embedding_table.parameters()),
                     max_norm=max_grad_norm,
                 )
             optimizer.step()
@@ -353,8 +318,6 @@ def _train_two_tower(
     # ===== Step 7: Export Final Embeddings =====
     # These numpy arrays are consumed by evaluation/prediction code.
     with torch.no_grad():
-        user_tower.eval()
-        item_tower.eval()
-        final_user = user_tower(user_embedding_table.weight.detach()).cpu().numpy()
-        final_item = item_tower(item_embedding_table.weight.detach()).cpu().numpy()
+        final_user = user_embedding_table.weight.detach().cpu().numpy()
+        final_item = item_embedding_table.weight.detach().cpu().numpy()
     return final_user, final_item

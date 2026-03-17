@@ -49,8 +49,7 @@ def _write_train_artifacts(
     *,
     split_path: Path,
     selected_model_name: str,
-    select_k: int,
-    top_ks: list[int],
+    evaluation_top_k: int,
     user_ids: list[str],
     item_ids: list[str],
     user_to_idx: dict[str, int],
@@ -81,7 +80,7 @@ def _write_train_artifacts(
                 "user_to_idx": user_to_idx,
                 "item_to_idx": item_to_idx,
                 "train_user_items": train,
-                "top_ks": top_ks,
+                "evaluation_top_k": evaluation_top_k,
                 "popularity_scores": popularity,
                 "mf_user_embeddings": mf_user,
                 "mf_item_embeddings": mf_item,
@@ -91,15 +90,15 @@ def _write_train_artifacts(
             file,
         )
 
-    write_json(output_dir / "validation_retrieval_metrics.json", {"rows": validation_metrics, "k_values": top_ks})
-    write_json(output_dir / "test_retrieval_metrics.json", {"rows": test_metrics, "k_values": top_ks})
+    write_json(output_dir / "validation_retrieval_metrics.json", {"rows": validation_metrics, "k_value": evaluation_top_k})
+    write_json(output_dir / "test_retrieval_metrics.json", {"rows": test_metrics, "k_value": evaluation_top_k})
     write_json(
         output_dir / "train_metrics.json",
         {
             "input_splits_path": str(split_path),
             "selected_model_name": selected_model_name,
-            "selection_rule": f"maximize_validation_Recall@{select_k}",
-            "k_values": top_ks,
+            "selection_rule": f"maximize_validation_Recall@{evaluation_top_k}",
+            "k_value": evaluation_top_k,
             "counts": {
                 "users_total": len(user_ids),
                 "items_train_universe": len(item_ids),
