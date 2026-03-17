@@ -2,9 +2,7 @@
   "input_splits_path": "data/gold/feature_store/recommender/user_item_splits/user_item_splits.parquet",
   "selected_model_name": "mf",
   "selection_rule": "maximize_validation_Recall@20",
-  "k_values": [
-    20
-  ],
+  "k_value": 20,
   "counts": {
     "users_total": 4298,
     "items_train_universe": 3525,
@@ -21,19 +19,11 @@
     "l2_reg": 0.0001,
     "max_grad_norm": 1.0,
     "early_stop_rounds": 4,
-    "early_stop_metric": "val_recall_at_k",
     "early_stop_k": 20,
     "early_stop_tolerance": 0.0001,
     "temperature": 0.7,
-    "normalize_embeddings": true,
-    "tower_hidden_dim": 0,
-    "tower_dropout": 0.0,
-    "device": "auto",
     "mf_components": 64,
     "mf_n_iter": 15,
-    "mf_weighting": "tfidf",
-    "mf_algorithm": "randomized",
-    "mf_tol": 0.0,
-    "popularity_transform": "log1p"
+    "mf_weighting": "tfidf"
   }
 }

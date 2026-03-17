@@ -1,9 +1,9 @@
 """Popularity recommender model module.
 
 Workflow Steps:
-1) Read deduped train user->items interactions.
-2) Count item popularity directly from those train interactions.
-3) Apply the configured popularity-score transform.
+1) Read precomputed item interaction counts from train data.
+2) Apply the configured popularity-score transform.
+3) Normalize the resulting popularity-score vector.
 4) Return one item-score vector for shared evaluation/selection.
 """
 
@@ -19,20 +19,32 @@ from mle_marketplace_growth.recommender.constants import POPULARITY_TRANSFORM
 from mle_marketplace_growth.recommender.helpers.metrics import _top_k_indices
 
 
+def build_item_interaction_counts(
+    train_interactions: dict[str, set[str]],
+    item_id_to_idx: dict[str, int],
+) -> np.ndarray:
+    """What: Count how many train users interacted with each item.
+    Why: Popularity training only needs item-level counts, not the full user->items map after this step.
+    """
+    observed_item_indices = [
+        item_id_to_idx[item_id]
+        for item_ids in train_interactions.values()
+        for item_id in item_ids
+        if item_id in item_id_to_idx
+    ]
+    if not observed_item_indices:
+        return np.zeros(len(item_id_to_idx), dtype=float)
+    return np.bincount(observed_item_indices, minlength=len(item_id_to_idx)).astype(float)
+
+
 def _popularity_scores(
-    train: dict[str, set[str]],
-    item_to_idx: dict[str, int],
+    item_interaction_counts: np.ndarray,
     transform: str = "linear",
 ) -> np.ndarray:
-    """What: Compute normalized item popularity scores from deduped train interactions.
-    Why: Popularity only needs item-level counts, so direct counting is simpler than building numeric pair arrays.
+    """What: Compute normalized item popularity scores from item-level interaction counts.
+    Why: Popularity scoring should operate on the simplest representation it actually needs.
     """
-    scores = np.zeros(len(item_to_idx), dtype=float)
-    for item_ids in train.values():
-        for item_id in item_ids:
-            item_index = item_to_idx.get(item_id)
-            if item_index is not None:
-                scores[item_index] += 1.0
+    scores = np.asarray(item_interaction_counts, dtype=float).copy()
     if transform == "log1p":
         scores = np.log1p(scores)
     elif transform != "linear":
@@ -86,15 +98,13 @@ class PopularityScorer:
 
 
 def train_popularity_candidate(
-    train: dict[str, set[str]],
-    item_to_idx: dict[str, int],
+    item_interaction_counts: np.ndarray,
 ) -> np.ndarray:
     """What: Train the popularity baseline candidate.
     Why: Keeps popularity-specific fitting in one readable module.
     """
     popularity_scores = _popularity_scores(
-        train,
-        item_to_idx,
+        item_interaction_counts,
         transform=POPULARITY_TRANSFORM,
     )
     print("[recommender.models.popularity] trained popularity baseline")

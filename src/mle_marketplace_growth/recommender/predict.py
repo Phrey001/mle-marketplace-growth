@@ -19,7 +19,11 @@ import numpy as np
 
 from mle_marketplace_growth.helpers import read_json, write_json
 from mle_marketplace_growth.recommender.constants import ANN_BACKEND
-from mle_marketplace_growth.recommender.helpers.artifacts import _write_ann_index
+from mle_marketplace_growth.recommender.helpers.artifacts import (
+    _load_selected_model_meta,
+    _load_shared_runtime_context,
+    _write_ann_index,
+)
 from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
 from mle_marketplace_growth.recommender.models.mf import MFScorer
 from mle_marketplace_growth.recommender.models.popularity import PopularityScorer
@@ -89,18 +93,16 @@ def run_predict(config_path: str) -> None:
         raise ValueError("top_k must be >= 1")
 
     # ===== Load Inputs =====
-    selected_model_meta = read_json(selected_model_meta_path)
-    shared_context = read_json(shared_context_path)
+    selected_model_meta = _load_selected_model_meta(read_json(selected_model_meta_path))
+    shared_runtime_context = _load_shared_runtime_context(read_json(shared_context_path))
 
-    selected = selected_model_meta["selected_model_name"]
-    user_ids: list[str] = shared_context["user_ids"]
-    item_ids: list[str] = shared_context["item_ids"]
-    user_to_idx: dict[str, int] = {str(key): int(value) for key, value in shared_context["user_to_idx"].items()}
-    train_user_items: dict[str, set[str]] = {
-        str(user_id): set(items) for user_id, items in shared_context["train_user_items"].items()
-    }
-    item_to_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
-    model_dir = runtime.artifacts_dir / str(selected_model_meta["model_artifact_dir"])
+    selected = selected_model_meta.selected_model_name
+    user_ids = shared_runtime_context.user_ids
+    item_ids = shared_runtime_context.item_ids
+    user_to_idx = shared_runtime_context.user_to_idx
+    train_user_items = shared_runtime_context.train_user_items
+    item_to_idx = shared_runtime_context.item_to_idx
+    model_dir = runtime.artifacts_dir / selected_model_meta.model_artifact_dir
     scorer_cls = SCORER_REGISTRY.get(selected)
     if scorer_cls is None:
         raise ValueError(f"Unsupported selected model: {selected}")

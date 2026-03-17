@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
@@ -16,7 +17,57 @@ Workflow Steps:
 """
 
 
-def _read_table(path: Path) -> pd.DataFrame:
+@dataclass(frozen=True)
+class SplitInteractions:
+    train: dict[str, set[str]]
+    validation: dict[str, set[str]]
+    test: dict[str, set[str]]
+
+
+@dataclass(frozen=True)
+class EntityIndex:
+    ids: list[str]
+    id_to_idx: dict[str, int]
+
+
+def _require_columns(rows_df: pd.DataFrame, required: set[str], *, label: str) -> None:
+    """What: Assert a DataFrame contains the required columns for one contract.
+    Why: Keeps the loaders focused on flow rather than repeated schema-check boilerplate.
+    """
+    missing = sorted(required - set(rows_df.columns))
+    if missing:
+        raise ValueError(f"Missing required columns in {label}: {missing}")
+
+
+def _validate_allowed_splits(split_series: pd.Series) -> None:
+    """What: Assert split labels use the canonical train/val/test vocabulary.
+    Why: Keeps downstream ML code free of split-label normalization or branching.
+    """
+    observed_splits = set(split_series.astype(str).str.strip().str.lower())
+    allowed_splits = {"train", "val", "test"}
+    if not observed_splits.issubset(allowed_splits):
+        invalid_splits = sorted(observed_splits - allowed_splits)
+        raise ValueError(f"Invalid split values in split dataset: {invalid_splits}")
+
+
+def _validate_unique_contiguous_index(indexed_df: pd.DataFrame, *, id_col: str, idx_col: str, path: Path) -> None:
+    """What: Validate entity ids are unique and integer indices run contiguously from zero.
+    Why: Guarantees stable embedding-matrix alignment for model training and serving artifacts.
+    """
+    if indexed_df[id_col].duplicated().any():
+        duplicate_id = indexed_df.loc[indexed_df[id_col].duplicated(), id_col].iloc[0]
+        raise ValueError(f"Duplicate entity id in index file {path}: {duplicate_id}")
+    if indexed_df[idx_col].duplicated().any():
+        duplicate_idx = indexed_df.loc[indexed_df[idx_col].duplicated(), idx_col].iloc[0]
+        raise ValueError(f"Duplicate entity idx in index file {path}: {duplicate_idx}")
+
+    observed = np.sort(indexed_df[idx_col].to_numpy())
+    expected = np.arange(len(indexed_df), dtype=int)
+    if not np.array_equal(observed, expected):
+        raise ValueError(f"Entity idx must be contiguous from 0 in {path}")
+
+
+def _read_parquet_to_df(path: Path) -> pd.DataFrame:
     """What: Load parquet rows into a pandas DataFrame via DuckDB.
     Why: Keeps downstream ML prep on columnar/tabular structures.
     """
@@ -27,43 +78,36 @@ def _read_table(path: Path) -> pd.DataFrame:
         connection.close()
 
 
-def _load_split_rows(path: Path) -> pd.DataFrame:
-    """What: Load split parquet and validate required split-table columns.
+def _load_user_item_splits_df(path: Path) -> pd.DataFrame:
+    """What: Load `user_item_splits.parquet` and validate required split-table columns.
     Why: Ensures train/eval logic receives the expected split schema.
     """
-    rows_df = _read_table(path)
-    if rows_df.empty:
+    user_item_splits_df = _read_parquet_to_df(path)
+    if user_item_splits_df.empty:
         raise ValueError(f"No rows found in split dataset: {path}")
-    required = {"user_id", "item_id", "split", "event_ts"}
-    missing = sorted(required - set(rows_df.columns))
-    if missing:
-        raise ValueError(f"Missing required columns in split dataset: {missing}")
-    observed_splits = set(rows_df["split"].astype(str).str.strip().str.lower())
-    allowed_splits = {"train", "val", "test"}
-    if not observed_splits.issubset(allowed_splits):
-        invalid_splits = sorted(observed_splits - allowed_splits)
-        raise ValueError(f"Invalid split values in split dataset: {invalid_splits}")
-    return rows_df
+    _require_columns(user_item_splits_df, {"user_id", "item_id", "split", "event_ts"}, label="split dataset")
+    _validate_allowed_splits(user_item_splits_df["split"])
+    return user_item_splits_df
 
 
-def _validate_split_chronology(rows_df: pd.DataFrame) -> None:
+def _validate_split_chronology(user_item_splits_df: pd.DataFrame) -> None:
     """What: Enforce per-user train < validation < test temporal ordering.
     Why: Prevents temporal leakage after the feature store assigns invoice-level
     chronological splits and all line items inherit that split.
     """
-    if rows_df.empty:
+    if user_item_splits_df.empty:
         return
 
-    split_rows_df = rows_df.copy()
-    split_rows_df["event_ts"] = pd.to_datetime(split_rows_df["event_ts"], errors="coerce")
-    if split_rows_df["event_ts"].isna().any():
+    user_item_splits_with_ts_df = user_item_splits_df.copy()
+    user_item_splits_with_ts_df["event_ts"] = pd.to_datetime(user_item_splits_with_ts_df["event_ts"], errors="coerce")
+    if user_item_splits_with_ts_df["event_ts"].isna().any():
         raise ValueError("Invalid event_ts in split dataset; failed to parse datetime.")
 
     # Collapse each user's rows into one summary row:
     # user_id | max_event_ts_train | min_event_ts_val | max_event_ts_val | min_event_ts_test
     # The chronology rule is then: train_end <= val_start and val_end <= test_start.
     per_user_split_bounds_df = (
-        split_rows_df.groupby(["user_id", "split"], sort=False)["event_ts"]
+        user_item_splits_with_ts_df.groupby(["user_id", "split"], sort=False)["event_ts"]
         .agg(min_event_ts="min", max_event_ts="max")
         .unstack("split")
     )
@@ -92,16 +136,18 @@ def _validate_split_chronology(rows_df: pd.DataFrame) -> None:
         )
 
 
-def _build_interactions(rows_df: pd.DataFrame) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
+def _build_split_interactions(
+    user_item_splits_df: pd.DataFrame,
+) -> SplitInteractions:
     """What: Convert split rows into user->item interaction maps by split.
     Why: Provides compact structures for model training and metric evaluation
     after invoice-level split decisions have already been assigned upstream.
     """
-    split_rows_df = rows_df[["user_id", "item_id", "split"]].copy()
+    user_item_split_labels_df = user_item_splits_df[["user_id", "item_id", "split"]].copy()
 
     def _interaction_map(split_values: set[str]) -> dict[str, set[str]]:
-        split_df = split_rows_df[split_rows_df["split"].isin(split_values)]
-        grouped = split_df.groupby("user_id", sort=False)["item_id"].agg(lambda items: set(items.tolist()))
+        split_df = user_item_split_labels_df[user_item_split_labels_df["split"].isin(split_values)]
+        grouped = split_df.groupby("user_id", sort=False)["item_id"].agg(set)
         return grouped.to_dict()
 
     train = _interaction_map({"train"})
@@ -113,41 +159,27 @@ def _build_interactions(rows_df: pd.DataFrame) -> tuple[dict[str, set[str]], dic
         raise ValueError("No validation interactions found.")
     if not test:
         raise ValueError("No test interactions found.")
-    return train, validation, test
+    return SplitInteractions(train=train, validation=validation, test=test)
 
 
-def _load_entity_index(path: Path, id_col: str, idx_col: str) -> tuple[list[str], dict[str, int]]:
+def _load_entity_index(path: Path, id_col: str, idx_col: str) -> EntityIndex:
     """What: Load entity index table and validate unique contiguous indices.
     Why: Guarantees stable row-index mapping for embedding matrices.
     """
-    if not path.exists(): raise FileNotFoundError(f"Entity index file not found: {path}")
-    rows_df = _read_table(path)
-    if rows_df.empty:
+    entity_index_df = _read_parquet_to_df(path)
+    if entity_index_df.empty:
         raise ValueError(f"No rows found in entity index file: {path}")
-    required = {id_col, idx_col}
-    missing = sorted(required - set(rows_df.columns))
-    if missing:
-        raise ValueError(f"Missing required columns in entity index file {path}: {missing}")
-    indexed_df = rows_df[[id_col, idx_col]].copy()
+    _require_columns(entity_index_df, {id_col, idx_col}, label=f"entity index file {path}")
+    indexed_df = entity_index_df[[id_col, idx_col]].copy()
     indexed_df[idx_col] = indexed_df[idx_col].astype(int)
-
-    if indexed_df[id_col].duplicated().any():
-        duplicate_id = indexed_df.loc[indexed_df[id_col].duplicated(), id_col].iloc[0]
-        raise ValueError(f"Duplicate entity id in index file {path}: {duplicate_id}")
-    if indexed_df[idx_col].duplicated().any():
-        duplicate_idx = indexed_df.loc[indexed_df[idx_col].duplicated(), idx_col].iloc[0]
-        raise ValueError(f"Duplicate entity idx in index file {path}: {duplicate_idx}")
-
-    observed = np.sort(indexed_df[idx_col].to_numpy())
-    expected = np.arange(len(indexed_df), dtype=int)
-    if not np.array_equal(observed, expected):
-        raise ValueError(f"Entity idx must be contiguous from 0 in {path}")
+    _validate_unique_contiguous_index(indexed_df, id_col=id_col, idx_col=idx_col, path=path)
 
     # Preserve row-id alignment by explicit index reordering: idx 0..N-1 -> entity id.
+    expected = np.arange(len(indexed_df), dtype=int)
     ordered_ids = (
         indexed_df.set_index(idx_col)[id_col]
         .reindex(expected)
         .tolist()
     )
     id_to_idx = indexed_df.set_index(id_col)[idx_col].to_dict()
-    return ordered_ids, id_to_idx
+    return EntityIndex(ids=ordered_ids, id_to_idx=id_to_idx)

@@ -27,6 +27,12 @@
       "detail": "row_count=85960"
     },
     {
+      "check": "selected_model_meta_matches_selection",
+      "description": "Selected-model metadata should match the train selected model.",
+      "passed": true,
+      "detail": "meta_selected=mf"
+    },
+    {
       "check": "embedding_index_model_matches_selection",
       "description": "Embedding index selected model should match train selected model.",
       "passed": true,

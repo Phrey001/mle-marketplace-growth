@@ -17,7 +17,7 @@ Workflow Steps:
 @dataclass(frozen=True)
 class RecommenderRuntimeConfig:
     cfg: dict
-    splits_path: Path
+    user_item_splits_path: Path
     user_index_path: Path
     item_index_path: Path
     artifacts_dir: Path
@@ -56,7 +56,7 @@ def load_recommender_runtime_config(config_path: str) -> RecommenderRuntimeConfi
     gold_root = _recommender_gold_root()
     return RecommenderRuntimeConfig(
         cfg=cfg,
-        splits_path=gold_root / "user_item_splits" / "user_item_splits.parquet",
+        user_item_splits_path=gold_root / "user_item_splits" / "user_item_splits.parquet",
         user_index_path=gold_root / "user_index" / "user_index.parquet",
         item_index_path=gold_root / "item_index" / "item_index.parquet",
         artifacts_dir=_recommender_runtime_root(as_of_date),

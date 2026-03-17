@@ -15,12 +15,11 @@ This module is the owner of offline model evaluation in the recommender pipeline
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
-
-import numpy as np
+from dataclasses import asdict
 
 from mle_marketplace_growth.helpers import cfg_required
-from mle_marketplace_growth.recommender.constants import ALLOWED_MF_WEIGHTINGS, EVALUATION_TOP_K, MODEL_NAMES
+from mle_marketplace_growth.recommender.constants import ALLOWED_MF_WEIGHTINGS, EVALUATION_TOP_K
+from mle_marketplace_growth.recommender.contracts import RecommenderTrainParams, TrainingInputs
 from mle_marketplace_growth.recommender.helpers.artifacts import (
     CandidateModelArtifactOutputs,
     SelectionArtifactOutputs,
@@ -29,58 +28,13 @@ from mle_marketplace_growth.recommender.helpers.artifacts import (
 )
 from mle_marketplace_growth.recommender.helpers.config import load_recommender_runtime_config
 from mle_marketplace_growth.recommender.helpers.data import (
-    _build_interactions,
+    _build_split_interactions,
     _load_entity_index,
-    _load_split_rows,
+    _load_user_item_splits_df,
     _validate_split_chronology,
 )
-from mle_marketplace_growth.recommender.helpers.metrics import _evaluate_ranked_items, _top_k_indices, _user_eval_pool
-from mle_marketplace_growth.recommender.models.mf import MFScorer, train_mf_candidate
-from mle_marketplace_growth.recommender.models.popularity import PopularityScorer, train_popularity_candidate
-from mle_marketplace_growth.recommender.models.two_tower import TwoTowerScorer, train_two_tower_candidate
-
-
-@dataclass(frozen=True)
-class RecommenderTrainParams:
-    embedding_dim: int
-    epochs: int
-    learning_rate: float
-    negative_samples: int
-    batch_size: int
-    l2_reg: float
-    max_grad_norm: float
-    early_stop_rounds: int
-    early_stop_k: int
-    early_stop_tolerance: float
-    temperature: float
-    mf_components: int
-    mf_n_iter: int
-    mf_weighting: str
-
-
-@dataclass(frozen=True)
-class CandidateModelArtifacts:
-    artifacts_by_model: dict[str, dict[str, np.ndarray]]
-
-
-@dataclass(frozen=True)
-class ModelSelectionResult:
-    validation_metrics: list[dict]
-    test_metrics: list[dict]
-    selected_model_name: str
-
-
-MODEL_SCORER_REGISTRY = {
-    "popularity": lambda *, model_artifacts: PopularityScorer(scores=model_artifacts["scores"]),
-    "mf": lambda *, model_artifacts: MFScorer(
-        user_embeddings=model_artifacts["user_embeddings"],
-        item_embeddings=model_artifacts["item_embeddings"],
-    ),
-    "two_tower": lambda *, model_artifacts: TwoTowerScorer(
-        user_embeddings=model_artifacts["user_embeddings"],
-        item_embeddings=model_artifacts["item_embeddings"],
-    ),
-}
+from mle_marketplace_growth.recommender.select_best_model import evaluate_and_select_model
+from mle_marketplace_growth.recommender.train_candidates import train_candidate_models
 
 
 def _load_train_params(cfg: dict) -> RecommenderTrainParams:
@@ -107,7 +61,7 @@ def _load_train_params(cfg: dict) -> RecommenderTrainParams:
 
 
 def _validate_train_inputs(
-    split_path,
+    user_item_splits_path,
     user_index_path,
     item_index_path,
     train_params: RecommenderTrainParams,
@@ -115,8 +69,8 @@ def _validate_train_inputs(
     """What: Validate filesystem inputs and semantic training preconditions after config parsing.
     Why: Fails fast with focused error messages before candidate training starts.
     """
-    if not split_path.exists():
-        raise FileNotFoundError(f"Split parquet not found: {split_path}")
+    if not user_item_splits_path.exists():
+        raise FileNotFoundError(f"Split parquet not found: {user_item_splits_path}")
     if not user_index_path.exists():
         raise FileNotFoundError(f"User index parquet not found: {user_index_path}")
     if not item_index_path.exists():
@@ -151,164 +105,45 @@ def _validate_train_inputs(
         raise ValueError(f"mf_weighting must be one of {list(ALLOWED_MF_WEIGHTINGS)}")
 
 
-def _train_candidate_models(
-    train: dict[str, set[str]],
-    validation: dict[str, set[str]],
-    user_to_idx: dict[str, int],
-    item_to_idx: dict[str, int],
-    train_params: RecommenderTrainParams,
-) -> CandidateModelArtifacts:
-    """What: Train popularity, MF, and two-tower candidates through dedicated model modules.
-    Why: This stage intentionally trains all supported model families in one run so they are compared fairly on the same data split.
+def _load_training_inputs(user_item_splits_path, user_index_path, item_index_path) -> TrainingInputs:
+    """What: Load and normalize all shared inputs needed by candidate training/evaluation.
+    Why: Keeps the top-level stage entrypoint focused on orchestration rather than setup details.
     """
-    popularity_scores = train_popularity_candidate(train, item_to_idx)
-    mf_user_embeddings, mf_item_embeddings = train_mf_candidate(
-        train,
-        user_to_idx,
-        item_to_idx,
-        mf_components=train_params.mf_components,
-        mf_n_iter=train_params.mf_n_iter,
-        mf_weighting=train_params.mf_weighting,
-    )
-    tt_user_embeddings, tt_item_embeddings = train_two_tower_candidate(
-        train,
-        validation,
-        user_to_idx,
-        item_to_idx,
-        embedding_dim=train_params.embedding_dim,
-        epochs=train_params.epochs,
-        learning_rate=train_params.learning_rate,
-        negative_samples=train_params.negative_samples,
-        batch_size=train_params.batch_size,
-        l2_reg=train_params.l2_reg,
-        max_grad_norm=train_params.max_grad_norm,
-        early_stop_rounds=train_params.early_stop_rounds,
-        early_stop_k=train_params.early_stop_k,
-        early_stop_tolerance=train_params.early_stop_tolerance,
-        temperature=train_params.temperature,
-    )
-    return CandidateModelArtifacts(
-        artifacts_by_model={
-            "popularity": {"scores": popularity_scores},
-            "mf": {
-                "user_embeddings": mf_user_embeddings,
-                "item_embeddings": mf_item_embeddings,
-            },
-            "two_tower": {
-                "user_embeddings": tt_user_embeddings,
-                "item_embeddings": tt_item_embeddings,
-            },
-        },
+    user_item_splits_df = _load_user_item_splits_df(user_item_splits_path)
+    _validate_split_chronology(user_item_splits_df)
+    split_interactions = _build_split_interactions(user_item_splits_df)
+    user_index = _load_entity_index(user_index_path, id_col="user_id", idx_col="user_idx")
+    item_index = _load_entity_index(item_index_path, id_col="item_id", idx_col="item_idx")
+    return TrainingInputs(
+        split_interactions=split_interactions,
+        user_index=user_index,
+        item_index=item_index,
     )
 
 
-def _evaluate_and_select_model(
-    user_ids: list[str],
-    train: dict[str, set[str]],
-    validation: dict[str, set[str]],
-    test: dict[str, set[str]],
-    user_to_idx: dict[str, int],
-    item_to_idx: dict[str, int],
-    candidate_artifacts: CandidateModelArtifacts,
-) -> ModelSelectionResult:
-    """What: Evaluate all candidates and select best by validation Recall@K.
-    Why: Freezes one selected model for downstream artifact writing and serving.
+def _log_training_context(training_inputs: TrainingInputs, train_params: RecommenderTrainParams) -> None:
+    """What: Print concise run context before candidate training starts.
+    Why: Makes the stage easier to inspect without scattering print statements across the main flow.
     """
-    def _evaluate_model(
-        *,
-        model_name: str,
-        users: list[str],
-        train_rows: dict[str, set[str]],
-        split_rows: dict[str, set[str]],
-    ) -> dict:
-        """What: Evaluate one model family on one split at the configured K cutoff.
-        Why: Produces comparable offline retrieval metrics for model selection inside this stage.
-        """
-        def _eligible_user_pool(user_id: str) -> tuple[list[int], set[int], int] | None:
-            if user_id not in split_rows or user_id not in train_rows or user_id not in user_to_idx:
-                return None
-            pool = _user_eval_pool(train_rows[user_id], split_rows[user_id], item_to_idx)
-            if pool is None:
-                return None
-            candidate_item_indices, ground_truth_indices = pool
-            return candidate_item_indices, ground_truth_indices, user_to_idx[user_id]
-
-        scorer_builder = MODEL_SCORER_REGISTRY.get(model_name)
-        if scorer_builder is None:
-            raise ValueError(f"Unsupported model: {model_name}")
-        model_artifacts = candidate_artifacts.artifacts_by_model.get(model_name)
-        if model_artifacts is None:
-            raise ValueError(f"Missing candidate artifacts for model: {model_name}")
-        scorer = scorer_builder(model_artifacts=model_artifacts)
-        metric_sums = {"recall": 0.0, "ndcg": 0.0, "hit_rate": 0.0}
-        eligible_users = 0
-        item_count = len(item_to_idx)
-
-        for user_id in users:
-            eligible = _eligible_user_pool(user_id)
-            if eligible is None:
-                continue
-            candidate_item_indices, ground_truth_indices, user_index = eligible
-            eligible_users += 1
-            candidate_scores = scorer.score_candidate_indices(user_index, candidate_item_indices)
-            effective_k = min(EVALUATION_TOP_K, len(candidate_item_indices), item_count)
-            top_local_indices = _top_k_indices(candidate_scores, effective_k)
-            ranked_item_indices = [candidate_item_indices[idx] for idx in top_local_indices]
-            row_metrics = _evaluate_ranked_items(ranked_item_indices, ground_truth_indices, effective_k)
-            metric_sums["recall"] += row_metrics["recall"]
-            metric_sums["hit_rate"] += row_metrics["hit_rate"]
-            metric_sums["ndcg"] += row_metrics["ndcg"]
-
-        if eligible_users == 0:
-            metrics = {
-                f"Recall@{EVALUATION_TOP_K}": 0.0,
-                f"NDCG@{EVALUATION_TOP_K}": 0.0,
-                f"HitRate@{EVALUATION_TOP_K}": 0.0,
-            }
-        else:
-            metrics = {
-                f"Recall@{EVALUATION_TOP_K}": round(metric_sums["recall"] / eligible_users, 6),
-                f"NDCG@{EVALUATION_TOP_K}": round(metric_sums["ndcg"] / eligible_users, 6),
-                f"HitRate@{EVALUATION_TOP_K}": round(metric_sums["hit_rate"] / eligible_users, 6),
-            }
-        return {"model_name": model_name, "eligible_users": eligible_users, "metrics": metrics}
-
-    model_names = list(MODEL_NAMES)
-    metrics_by_split = {
-        split_name: [
-            _evaluate_model(
-                model_name=name,
-                users=user_ids,
-                train_rows=train,
-                split_rows=split_rows,
-            )
-            for name in model_names
-        ]
-        for split_name, split_rows in [("validation", validation), ("test", test)]
-    }
-    validation_metrics, test_metrics = metrics_by_split["validation"], metrics_by_split["test"]
-    for result in validation_metrics:
-        print(
-            "[recommender.train_and_select] validation:",
-            result["model_name"],
-            f"Recall@{EVALUATION_TOP_K}={result['metrics'].get(f'Recall@{EVALUATION_TOP_K}', 0.0):.6f}",
-        )
-    selected_model_name = max(
-        validation_metrics,
-        key=lambda result: result["metrics"].get(f"Recall@{EVALUATION_TOP_K}", 0.0),
-    )["model_name"]
-    print(f"[recommender.train_and_select] selected_model={selected_model_name} by Recall@{EVALUATION_TOP_K}")
-    selected_test_row = next((result for result in test_metrics if result["model_name"] == selected_model_name), None)
-    if selected_test_row is not None:
-        print(
-            "[recommender.train_and_select] test:",
-            selected_model_name,
-            f"Recall@{EVALUATION_TOP_K}={selected_test_row['metrics'].get(f'Recall@{EVALUATION_TOP_K}', 0.0):.6f}",
-        )
-    return ModelSelectionResult(
-        validation_metrics=validation_metrics,
-        test_metrics=test_metrics,
-        selected_model_name=selected_model_name,
+    print(
+        "[recommender.train_and_select] loaded splits:",
+        "train_users="
+        f"{len(training_inputs.split_interactions.train)}, "
+        f"val_users={len(training_inputs.split_interactions.validation)}, "
+        f"test_users={len(training_inputs.split_interactions.test)}, "
+        f"item_universe={len(training_inputs.item_index.ids)}",
+    )
+    print(
+        "[recommender.train_and_select] config:",
+        f"embedding_dim={train_params.embedding_dim}, epochs={train_params.epochs}, "
+        f"lr={train_params.learning_rate}, negatives={train_params.negative_samples}, "
+        f"batch_size={train_params.batch_size}, l2={train_params.l2_reg}, "
+        f"max_grad_norm={train_params.max_grad_norm}",
+    )
+    print(
+        "[recommender.train_and_select] convergence:",
+        f"early_stop_rounds={train_params.early_stop_rounds}, early_stop_k={train_params.early_stop_k}, "
+        f"early_stop_tolerance={train_params.early_stop_tolerance}, temperature={train_params.temperature}",
     )
 
 
@@ -317,61 +152,55 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     Why: Provides the in-process training-stage entrypoint reused by the CLI, pipeline,
     and internal experiment utilities such as the tuning sweep.
     """
+    # ===== Load Config And Validate Inputs =====
     runtime = load_recommender_runtime_config(config_path)
     cfg = runtime.cfg
-    split_path = runtime.splits_path
+    user_item_splits_path = runtime.user_item_splits_path
     user_index_path = runtime.user_index_path
     item_index_path = runtime.item_index_path
     output_dir = output_dir_override if output_dir_override is not None else runtime.artifacts_dir
     train_params = _load_train_params(cfg)
-    _validate_train_inputs(split_path, user_index_path, item_index_path, train_params)
+    _validate_train_inputs(user_item_splits_path, user_index_path, item_index_path, train_params)
 
-    rows_df = _load_split_rows(split_path)
-    _validate_split_chronology(rows_df)
-    train, validation, test = _build_interactions(rows_df)
-    user_ids, user_to_idx = _load_entity_index(user_index_path, id_col="user_id", idx_col="user_idx")
-    item_ids, item_to_idx = _load_entity_index(item_index_path, id_col="item_id", idx_col="item_idx")
-    print(
-        "[recommender.train_and_select] loaded splits:",
-        f"train_users={len(train)}, val_users={len(validation)}, test_users={len(test)}, item_universe={len(item_ids)}",
-    )
-    print(
-        "[recommender.train_and_select] config:",
-        f"embedding_dim={train_params.embedding_dim}, epochs={train_params.epochs}, lr={train_params.learning_rate}, negatives={train_params.negative_samples}, batch_size={train_params.batch_size}, l2={train_params.l2_reg}, max_grad_norm={train_params.max_grad_norm}",
-    )
-    print(
-        "[recommender.train_and_select] convergence:",
-        f"early_stop_rounds={train_params.early_stop_rounds}, early_stop_k={train_params.early_stop_k}, early_stop_tolerance={train_params.early_stop_tolerance}, temperature={train_params.temperature}",
+    # ===== Load Split Rows And Build Shared Interaction Inputs =====
+    training_inputs = _load_training_inputs(user_item_splits_path, user_index_path, item_index_path)
+    split_interactions = training_inputs.split_interactions
+    user_index = training_inputs.user_index
+    item_index = training_inputs.item_index
+    _log_training_context(training_inputs, train_params)
+
+    # ===== Train All Candidate Models On The Same Split =====
+    candidate_artifacts = train_candidate_models(
+        split_interactions=split_interactions,
+        user_index=user_index,
+        item_index=item_index,
+        train_params=train_params,
     )
 
-    candidate_artifacts = _train_candidate_models(
-        train,
-        validation,
-        user_to_idx,
-        item_to_idx,
-        train_params,
+    # ===== Run Offline Evaluation And Choose One Model =====
+    selection = evaluate_and_select_model(
+        user_ids=user_index.ids,
+        train=split_interactions.train,
+        validation=split_interactions.validation,
+        test=split_interactions.test,
+        user_to_idx=user_index.id_to_idx,
+        item_to_idx=item_index.id_to_idx,
+        candidate_artifacts=candidate_artifacts,
     )
-    selection = _evaluate_and_select_model(
-        user_ids,
-        train,
-        validation,
-        test,
-        user_to_idx,
-        item_to_idx,
-        candidate_artifacts,
-    )
+
+    # ===== Persist Selected-Model Artifacts And Metrics =====
     _write_train_artifacts(
         output_dir,
         context=TrainArtifactContext(
-            split_path=split_path,
+            split_path=user_item_splits_path,
             evaluation_top_k=EVALUATION_TOP_K,
-            user_ids=user_ids,
-            item_ids=item_ids,
-            user_to_idx=user_to_idx,
-            item_to_idx=item_to_idx,
-            train=train,
-            validation=validation,
-            test=test,
+            user_ids=user_index.ids,
+            item_ids=item_index.ids,
+            user_to_idx=user_index.id_to_idx,
+            item_to_idx=item_index.id_to_idx,
+            train=split_interactions.train,
+            validation=split_interactions.validation,
+            test=split_interactions.test,
             model_config=asdict(train_params),
         ),
         candidate_artifacts=CandidateModelArtifactOutputs(
