@@ -1,6 +1,6 @@
 # MLE Marketplace Growth Platform
 
-An end-to-end machine learning project for marketplace revenue growth via two complementary ML levers:
+An machine learning project for marketplace revenue growth via two complementary ML levers:
 
 - Purchase Propensity Engine Flow (propensity scoring + budget-constrained incentive allocation)
 - Recommender Engine Flow (candidate retrieval for personalized product exposure)
