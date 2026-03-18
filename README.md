@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 | Scope | Stack |
 |---|---|
-| Shared | Python, DuckDB, NumPy, CSV artifacts, YAML config |
+| Shared | Python, DuckDB |
 | Purchase propensity | scikit-learn, XGBoost |
 | Recommender | scikit-learn (MF baseline), PyTorch (two-tower), FAISS (ANN retrieval) |
 
