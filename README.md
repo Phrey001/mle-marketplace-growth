@@ -65,7 +65,7 @@ pip install -r requirements.txt
 | No online A/B testing | Repo is local/offline with no live traffic, so online impact cannot be measured directly. |
 | No offline causal incrementality estimation for promotions | Dataset lacks randomized treatment assignment and reliable promo-exposure logs. |
 | No recommender Stage 2 re-ranking | Current recommender scope is intentionally Stage 1 retrieval only. |
-| Production next step (out of scope) | Run randomized A/B tests for promotion decisions before broad rollout. |
+| No production experimentation loop | Promotion-policy rollout decisions would still require randomized A/B testing outside this repo. |
 
 Policy and evaluation definitions live in engine specs to avoid doc duplication:
 - `docs/purchase_propensity/spec.md`
