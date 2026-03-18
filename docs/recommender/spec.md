@@ -28,6 +28,13 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 | Required K | `K=20` |
 | ANN backend | FAISS HNSW inner-product index, fail-fast if unavailable |
 
+Artifact organization:
+- Run outputs are grouped into three artifact categories:
+  - offline evaluation artifacts
+  - serving artifacts
+  - validation/report artifacts
+- Exact output paths and run commands live in `docs/recommender/quickstart.md`.
+
 Datetime ownership/bounds:
 - Shared silver data availability is defined by `configs/shared.yaml`.
 - Engine datetime is owned by recommender config (`recommender_min_event_date`, `recommender_max_event_date`).
@@ -38,10 +45,10 @@ Datetime ownership/bounds:
 
 | Stage | Script | Key output(s) |
 |---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.parquet`, `user_item_splits.parquet`, `user_index.parquet`, `item_index.parquet` |
-| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | `offline_eval/train_metrics.json`, `offline_eval/validation_retrieval_metrics.json`, `offline_eval/test_retrieval_metrics.json`, `offline_eval/selected_model_meta.json`, `offline_eval/shared_context.json`, `offline_eval/models/<selected_model_name>/...` |
-| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `serving/item_embeddings.npy`, `serving/item_embedding_index.json`, `serving/ann_index.bin`, `serving/ann_index_meta.json`, `serving/topk_recommendations.csv` |
-| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `report/output_validation_summary.json`, `report/output_interpretation.md` |
+| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | interaction events, user-item split assignments, user index, item index |
+| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | training summary, validation/test retrieval metrics, selected-model metadata, shared runtime context, selected-model exported artifacts |
+| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | item embedding matrix, item embedding index, ANN index + metadata, Top-K recommendations |
+| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | validation summary, interpretation markdown |
 
 ## Model Contract
 
@@ -80,34 +87,30 @@ Interaction signal:
 
 ## Artifact Contract
 
-Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/`):
+Offline evaluation artifacts:
+- training summary
+- validation retrieval metrics
+- test retrieval metrics
+- selected-model metadata
+- shared runtime context
+- selected-model exported artifacts
 
-- `train_metrics.json`
-- `validation_retrieval_metrics.json`
-- `test_retrieval_metrics.json`
-- `selected_model_meta.json`
-- `shared_context.json`
-- `models/<selected_model_name>/...`
+Serving artifacts:
+- item embedding matrix
+- item embedding index
+- ANN index and metadata
+- Top-K recommendations
 
-Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/serving/`):
-
-- `item_embeddings.npy`
-- `item_embedding_index.json`
-- `ann_index.bin`
-- `ann_index_meta.json`
-- `topk_recommendations.csv`
-
-Validation/report artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/report/`):
-
-- `output_validation_summary.json`
-- `output_interpretation.md`
+Validation/report artifacts:
+- validation summary
+- interpretation markdown
 
 ## Acceptance Criteria
 
-- Output validation summary passes.
-- Validation/test metric files include all three models.
-- Selected model and selection rule are explicit in artifacts.
-- ANN artifacts are present and consistent with selected model.
+- Validation summary passes.
+- Validation/test retrieval metrics include all three models.
+- Selected model and selection rule are explicit in the run artifacts.
+- ANN artifacts are present and consistent with the selected model.
 - Top-K recommendations are non-empty and schema-valid.
 
 Run commands: `docs/recommender/quickstart.md`.

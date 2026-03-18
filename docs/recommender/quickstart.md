@@ -83,7 +83,7 @@ PYTHONPATH=src python -m mle_marketplace_growth.recommender.train_and_select --c
 
 Selection notes:
 - Split unit is purchase invoices, but models still rank item IDs.
-- Validation/test truth is the held-out invoice basket for each user.
+- Validation/test truth is the held-out purchase-invoice basket for each user.
 - Offline evaluation ranks the full item universe after excluding train-seen items for each user.
 - Model selection is based on exact offline `Recall@20`, not ANN retrieval.
 

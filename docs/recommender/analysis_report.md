@@ -27,7 +27,7 @@
 - Spec contract: `docs/recommender/spec.md`
 - Split rule: user-level chronological holdout at purchase-invoice grain
 - Prediction unit: ranked item IDs
-- Held-out truth unit: the item set from the user's held-out purchase invoice
+- Held-out truth unit: the item set from the user's held-out purchase-invoice basket
 - Recommendation objective: discovery only
 - Offline candidate universe: full item universe after excluding train-seen items
 - Serving retrieval: FAISS HNSW ANN over item embeddings

@@ -41,6 +41,7 @@ pip install -r requirements.txt
   - `docs/purchase_propensity/quickstart.md`
   - `docs/recommender/quickstart.md`
 - Engine contracts (split/model/artifact/acceptance): `docs/purchase_propensity/spec.md`, `docs/recommender/spec.md`.
+- Generated artifacts are intentionally committed in this repo as demo evidence; quickstarts and specs define the canonical artifact layouts.
 
 ## Tech Stack
 
@@ -55,7 +56,7 @@ pip install -r requirements.txt
 | Engine | Signal Highlights |
 |---|---|
 | Purchase Propensity Engine Flow | Reproducible flow (feature store -> strict `10/1/1` split -> training -> budget-constrained backtest -> report), frozen structural decisions after initial sensitivity, ML policy benchmarked vs Random/RFM. |
-| Recommender Engine Flow | Reproducible retrieval flow (shared feature layer -> time split -> Popularity/MF/Two-Tower training -> retrieval eval -> report), validation-driven model selection, Stage 1 candidate generation scope. |
+| Recommender Engine Flow | Reproducible retrieval flow (shared feature layer -> purchase-invoice holdout -> Popularity/MF/Two-Tower training -> exact offline item-ranking eval -> FAISS ANN serving artifacts -> report), validation-driven model selection, Stage 1 candidate generation scope. |
 
 ## Key Limitations
 
