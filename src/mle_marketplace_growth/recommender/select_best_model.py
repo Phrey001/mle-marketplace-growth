@@ -1,9 +1,9 @@
 """Winner selection for recommender candidate models.
 
 Workflow Steps:
-1) Read already-scored validation and test metric rows.
+1) Read already-scored validation metric rows.
 2) Select one winning model by validation Recall@K.
-3) Return the selected model name plus both metric tables.
+3) Return the selected model name for downstream reporting and artifact writing.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from mle_marketplace_growth.recommender.constants import EVALUATION_TOP_K
 def select_best_model(
     *,
     validation_metrics: list[dict],
-    test_metrics: list[dict],
 ) -> str:
     """What: Select the winning candidate model from offline validation metrics.
     Why: Freezes one selected model for downstream artifact writing and serving.
@@ -32,11 +31,4 @@ def select_best_model(
         key=lambda result: result["metrics"].get(f"Recall@{EVALUATION_TOP_K}", 0.0),
     )["model_name"]
     print(f"[recommender.select_best_model] selected_model={selected_model_name} by Recall@{EVALUATION_TOP_K}")
-    selected_test_row = next((result for result in test_metrics if result["model_name"] == selected_model_name), None)
-    if selected_test_row is not None:
-        print(
-            "[recommender.select_best_model] test:",
-            selected_model_name,
-            f"Recall@{EVALUATION_TOP_K}={selected_test_row['metrics'].get(f'Recall@{EVALUATION_TOP_K}', 0.0):.6f}",
-        )
     return selected_model_name

@@ -1,0 +1,10 @@
+{
+  "selected_model_name": "mf",
+  "model_artifact_dir": "models/mf",
+  "shared_context_path": "shared_context.json",
+  "evaluation_top_k": 20,
+  "artifact_files": [
+    "user_embeddings.npy",
+    "item_embeddings.npy"
+  ]
+}

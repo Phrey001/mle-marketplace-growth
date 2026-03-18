@@ -26,8 +26,18 @@ class RecommenderRuntimeConfig:
 
 @dataclass(frozen=True)
 class RecommenderArtifactPaths:
+    offline_eval_dir: Path
+    serving_dir: Path
+    report_dir: Path
     selected_model_meta: Path
     shared_context: Path
+    train_metrics: Path
+    validation_retrieval_metrics: Path
+    test_retrieval_metrics: Path
+    ann_index: Path
+    ann_index_meta: Path
+    item_embeddings: Path
+    item_embedding_index: Path
     topk_recommendations: Path
     output_validation_summary: Path
     output_interpretation: Path
@@ -68,10 +78,23 @@ def artifact_paths(runtime: RecommenderRuntimeConfig) -> RecommenderArtifactPath
     """What: Derive canonical artifact file paths from runtime config.
     Why: Keeps all script outputs under a stable, shared run folder layout.
     """
+    offline_eval_dir = runtime.artifacts_dir / "offline_eval"
+    serving_dir = runtime.artifacts_dir / "serving"
+    report_dir = runtime.artifacts_dir / "report"
     return RecommenderArtifactPaths(
-        selected_model_meta=runtime.artifacts_dir / "selected_model_meta.json",
-        shared_context=runtime.artifacts_dir / "shared_context.json",
-        topk_recommendations=runtime.artifacts_dir / "topk_recommendations.csv",
-        output_validation_summary=runtime.artifacts_dir / "output_validation_summary.json",
-        output_interpretation=runtime.artifacts_dir / "output_interpretation.md",
+        offline_eval_dir=offline_eval_dir,
+        serving_dir=serving_dir,
+        report_dir=report_dir,
+        selected_model_meta=offline_eval_dir / "selected_model_meta.json",
+        shared_context=offline_eval_dir / "shared_context.json",
+        train_metrics=offline_eval_dir / "train_metrics.json",
+        validation_retrieval_metrics=offline_eval_dir / "validation_retrieval_metrics.json",
+        test_retrieval_metrics=offline_eval_dir / "test_retrieval_metrics.json",
+        ann_index=serving_dir / "ann_index.bin",
+        ann_index_meta=serving_dir / "ann_index_meta.json",
+        item_embeddings=serving_dir / "item_embeddings.npy",
+        item_embedding_index=serving_dir / "item_embedding_index.json",
+        topk_recommendations=serving_dir / "topk_recommendations.csv",
+        output_validation_summary=report_dir / "output_validation_summary.json",
+        output_interpretation=report_dir / "output_interpretation.md",
     )

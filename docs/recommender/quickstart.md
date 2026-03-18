@@ -37,7 +37,7 @@ PYTHONPATH=src python -m mle_marketplace_growth.recommender.run_pipeline --confi
 
 Pipeline note:
 - `run_pipeline.py` consumes the prebuilt recommender gold tables from `build_gold_recommender`.
-- `run_pipeline.py` writes both `output_validation_summary.json` and `output_interpretation.md`; there is no separate interpretation step in the recommended path.
+- `run_pipeline.py` writes both `report/output_validation_summary.json` and `report/output_interpretation.md`; there is no separate interpretation step in the recommended path.
 - Recommender feature-store outputs keep one canonical latest build; reruns overwrite prior outputs.
 
 ### 3) Refresh Report Chart
@@ -81,6 +81,12 @@ Use the commands below only if you want to inspect or rerun the offline ML pipel
 PYTHONPATH=src python -m mle_marketplace_growth.recommender.train_and_select --config configs/recommender/default.yaml
 ```
 
+Selection notes:
+- Split unit is purchase invoices, but models still rank item IDs.
+- Validation/test truth is the held-out invoice basket for each user.
+- Offline evaluation ranks the full item universe after excluding train-seen items for each user.
+- Model selection is based on exact offline `Recall@20`, not ANN retrieval.
+
 ### 2) Predict
 
 ```bash
@@ -105,9 +111,9 @@ PYTHONPATH=src python -m mle_marketplace_growth.recommender.predict --config con
 ```
 
 Serving notes:
-- This is the batch-serving-style step after training has already frozen the selected model artifacts under `selected_model_meta.json`, `shared_context.json`, and `models/<selected_model_name>/...`.
-- The script derives the canonical artifact folder from `recommender_max_event_date` in the same YAML config, then reads `artifacts/recommender/as_of=<recommender_max_event_date>/selected_model_meta.json`.
-- It reads the saved model artifacts, builds ANN retrieval artifacts, and writes `topk_recommendations.csv`.
+- This is the batch-serving-style step after training has already frozen the selected model artifacts under `offline_eval/selected_model_meta.json`, `offline_eval/shared_context.json`, and `offline_eval/models/<selected_model_name>/...`.
+- The script derives the canonical artifact folder from `recommender_max_event_date` in the same YAML config, then reads `artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/selected_model_meta.json`.
+- It reads the saved model artifacts, builds FAISS HNSW ANN retrieval artifacts under `serving/`, and writes `serving/topk_recommendations.csv`.
 - `run_pipeline.py` already includes this step so the recommended demo flow produces the final serving-style recommendation output in one run.
 - It is suitable as a standalone batch-scoring script for this demo repo, but not a full production deployment system by itself.
 
@@ -118,10 +124,10 @@ All artifacts are written under:
 
 | Priority | Artifact(s) | Why |
 |---|---|---|
-| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/output_validation_summary.json` | Confirms artifact contract and health checks |
-| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/output_interpretation.md` | Fast narrative summary of run outcomes |
-| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/validation_retrieval_metrics.json`, `artifacts/recommender/as_of=<recommender_max_event_date>/test_retrieval_metrics.json` | Core retrieval quality evidence |
-| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/topk_recommendations.csv` | Serving-style top-K output |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/report/output_validation_summary.json` | Confirms artifact contract and health checks |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/report/output_interpretation.md` | Fast narrative summary of run outcomes |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/validation_retrieval_metrics.json`, `artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/test_retrieval_metrics.json` | Core retrieval quality evidence |
+| Must | `artifacts/recommender/as_of=<recommender_max_event_date>/serving/topk_recommendations.csv` | Serving-style top-K output |
 | Must (manual) | `docs/recommender/analysis_report.md` | Refresh report after rerun |
 
 ## Optional Experiments
@@ -159,8 +165,8 @@ Review these tuning artifacts:
 
 Each trial folder contains:
 - `trial_config.yaml`
-- `validation_retrieval_metrics.json`
-- `test_retrieval_metrics.json`
+- `offline_eval/validation_retrieval_metrics.json`
+- `offline_eval/test_retrieval_metrics.json`
 
 ## Tests
 

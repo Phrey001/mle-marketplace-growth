@@ -147,7 +147,12 @@ def _build_split_interactions(
 ) -> SplitInteractions:
     """What: Convert split rows into user->item interaction maps by split.
     Why: Provides compact structures for model training and metric evaluation
-    after invoice-level split decisions have already been assigned upstream.
+    after purchase-invoice split decisions have already been assigned upstream.
+
+    Split meaning:
+    - `train[user_id]` contains items from the user's older purchase invoices
+    - `validation[user_id]` contains items from the user's second-latest purchase invoice
+    - `test[user_id]` contains items from the user's latest purchase invoice
     """
     user_item_split_labels_df = user_item_splits_df[["user_id", "item_id", "split"]].copy()
 

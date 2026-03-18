@@ -22,6 +22,7 @@ from mle_marketplace_growth.recommender.helpers.artifacts import (
     RetrievalMetricsPayload,
     _load_retrieval_metrics_payload,
     _load_selected_model_meta,
+    _load_shared_runtime_context,
 )
 
 
@@ -61,18 +62,20 @@ def _count_csv_rows(path: Path) -> int:
 
 
 def _core_artifact_paths(artifacts_dir: Path) -> CoreArtifactPaths:
-    """What: Build canonical recommender artifact file paths for one run.
-    Why: Keeps validation/interpretation readers aligned to one path contract.
+    """What: Build canonical recommender artifact file paths for one run root.
+    Why: Keeps validation and interpretation readers aligned to the shared subfolder contract.
     """
+    offline_eval_dir = artifacts_dir / "offline_eval"
+    serving_dir = artifacts_dir / "serving"
     return CoreArtifactPaths(
-        train_metrics=artifacts_dir / "train_metrics.json",
-        validation_metrics=artifacts_dir / "validation_retrieval_metrics.json",
-        test_metrics=artifacts_dir / "test_retrieval_metrics.json",
-        selected_model_meta=artifacts_dir / "selected_model_meta.json",
-        shared_context=artifacts_dir / "shared_context.json",
-        index_json=artifacts_dir / "item_embedding_index.json",
-        ann_meta=artifacts_dir / "ann_index_meta.json",
-        topk_csv=artifacts_dir / "topk_recommendations.csv",
+        train_metrics=offline_eval_dir / "train_metrics.json",
+        validation_metrics=offline_eval_dir / "validation_retrieval_metrics.json",
+        test_metrics=offline_eval_dir / "test_retrieval_metrics.json",
+        selected_model_meta=offline_eval_dir / "selected_model_meta.json",
+        shared_context=offline_eval_dir / "shared_context.json",
+        index_json=serving_dir / "item_embedding_index.json",
+        ann_meta=serving_dir / "ann_index_meta.json",
+        topk_csv=serving_dir / "topk_recommendations.csv",
     )
 
 
@@ -112,24 +115,28 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
     Why: Provides a deterministic pass/fail gate before report consumption.
     """
     # ===== Load Inputs =====
-    paths = _core_artifact_paths(artifacts_dir)
+    resolved_paths = _core_artifact_paths(artifacts_dir)
     for path in (
-        paths.train_metrics,
-        paths.validation_metrics,
-        paths.test_metrics,
-        paths.selected_model_meta,
-        paths.shared_context,
-        paths.index_json,
-        paths.ann_meta,
-        paths.topk_csv,
+        resolved_paths.train_metrics,
+        resolved_paths.validation_metrics,
+        resolved_paths.test_metrics,
+        resolved_paths.selected_model_meta,
+        resolved_paths.shared_context,
+        resolved_paths.index_json,
+        resolved_paths.ann_meta,
+        resolved_paths.topk_csv,
     ):
         if not path.exists():
             raise FileNotFoundError(f"Required artifact not found: {path}")
-    train_metrics, validation_metrics, test_metrics = _load_core_artifacts(artifacts_dir)
-    selected_model_meta = _load_selected_model_meta(read_json(paths.selected_model_meta))
-    index_json = read_json(paths.index_json)
-    ann_meta = read_json(paths.ann_meta)
-    topk_count = _count_csv_rows(paths.topk_csv)
+    train_metrics, validation_metrics, test_metrics = (
+        read_json(resolved_paths.train_metrics),
+        _load_retrieval_metrics_payload(read_json(resolved_paths.validation_metrics)),
+        _load_retrieval_metrics_payload(read_json(resolved_paths.test_metrics)),
+    )
+    selected_model_meta = _load_selected_model_meta(read_json(resolved_paths.selected_model_meta))
+    index_json = read_json(resolved_paths.index_json)
+    ann_meta = read_json(resolved_paths.ann_meta)
+    topk_count = _count_csv_rows(resolved_paths.topk_csv)
 
     validation_rows = validation_metrics.rows
     test_rows = test_metrics.rows
@@ -196,7 +203,7 @@ def run_validation(artifacts_dir: Path, output_json: Path | None = None) -> tupl
         ValidationCheck(
             check="ann_index_artifacts_present",
             description="ANN metadata and FAISS ANN index artifact must be present.",
-            passed=(artifacts_dir / "ann_index.bin").exists() and ann_meta.get("backend") == ANN_BACKEND,
+            passed=(artifacts_dir / "serving" / "ann_index.bin").exists() and ann_meta.get("backend") == ANN_BACKEND,
             detail=f"ann_backend={ann_meta.get('backend')}",
         )
     )
@@ -214,10 +221,12 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
     Why: Gives a fast human-readable summary for review and reporting.
     """
     # ===== Load Inputs =====
+    core_paths = _core_artifact_paths(artifacts_dir)
     train_metrics, validation_metrics, test_metrics = _load_core_artifacts(artifacts_dir)
+    shared_runtime_context = _load_shared_runtime_context(read_json(core_paths.shared_context))
     selected_model = train_metrics.get("selected_model_name", "unknown")
     selection_rule = train_metrics.get("selection_rule", "")
-    catalog_size = int(train_metrics.get("counts", {}).get("items_train_universe", 0))
+    catalog_size = len(shared_runtime_context.item_ids)
     anchor_k = int(train_metrics.get("k_value", 20))
     random_anchor = (anchor_k / catalog_size) if catalog_size > 0 else 0.0
 
@@ -256,7 +265,7 @@ def write_interpretation(artifacts_dir: Path, output_md: Path | None = None) -> 
         "_Scope: offline ranking quality only; causal business lift needs online experiment._",
         "",
     ]
-    report_path = output_md or (artifacts_dir / "output_interpretation.md")
+    report_path = output_md or (artifacts_dir / "report" / "output_interpretation.md")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path

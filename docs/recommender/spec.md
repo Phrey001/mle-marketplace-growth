@@ -17,9 +17,12 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 
 | Area | Contract |
 |---|---|
-| Split mode | User-level chronological holdout at invoice-moment grain: train=older invoice moments, val=second-latest invoice moment, test=latest invoice moment |
-| Eligibility | Users with fewer than 3 interactions are excluded from ranking evaluation |
+| Split mode | User-level chronological holdout at purchase-invoice grain: train=older purchase invoices, val=second-latest purchase invoice, test=latest purchase invoice |
+| Eligibility | Users with fewer than 3 purchase invoices are excluded from ranking evaluation |
 | Candidate universe | Retrieval candidates are from train item universe |
+| Recommendation policy | Discovery-oriented: offline evaluation and serving exclude train-seen items for every model family |
+| Offline eval retrieval | Exact ranking over the full item universe after excluding train-seen items for each user |
+| Serving retrieval | ANN via FAISS HNSW inner-product search for efficient retrieval over the full item universe |
 | Models compared | `popularity`, `mf`, `two_tower` |
 | Selection rule | Maximize validation `Recall@20` |
 | Required K | `K=20` |
@@ -36,9 +39,9 @@ Datetime ownership/bounds:
 | Stage | Script | Key output(s) |
 |---|---|---|
 | Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | `interaction_events.parquet`, `user_item_splits.parquet`, `user_index.parquet`, `item_index.parquet` |
-| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | `train_metrics.json`, `validation_retrieval_metrics.json`, `test_retrieval_metrics.json`, `selected_model_meta.json`, `shared_context.json`, `models/<selected_model_name>/...` |
-| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `item_embeddings.npy`, `item_embedding_index.json`, `ann_index.bin`, `ann_index_meta.json`, `topk_recommendations.csv` |
-| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `output_validation_summary.json`, `output_interpretation.md` |
+| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | `offline_eval/train_metrics.json`, `offline_eval/validation_retrieval_metrics.json`, `offline_eval/test_retrieval_metrics.json`, `offline_eval/selected_model_meta.json`, `offline_eval/shared_context.json`, `offline_eval/models/<selected_model_name>/...` |
+| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | `serving/item_embeddings.npy`, `serving/item_embedding_index.json`, `serving/ann_index.bin`, `serving/ann_index_meta.json`, `serving/topk_recommendations.csv` |
+| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | `report/output_validation_summary.json`, `report/output_interpretation.md` |
 
 ## Model Contract
 
@@ -53,10 +56,15 @@ Datetime ownership/bounds:
 | Primary metric | `Recall@20` |
 | Guardrails | `NDCG@20`, `HitRate@20` |
 
+Prediction/evaluation unit:
+- Models rank item IDs, not invoice IDs.
+- Held-out truth is the item set from the user's held-out purchase invoice (next basket).
+
 Design note:
 - A deeper one-hidden-layer tower variant was considered earlier, but the current repo keeps embedding-only towers to avoid extra complexity without clear benefit for this demo implementation.
 - Training and scoring are already split by recommender model family, while shared evaluation and prediction load the selected model through a common scorer contract.
 - Offline evaluation belongs to the `train_and_select` stage. `helpers/metrics.py` provides the ranking/metric primitives, not a separate pipeline stage.
+- The current engine optimizes for discovery recommendations only; repeat-purchase / buy-again flows would be a separate recommendation objective.
 
 Interaction signal:
 - Implemented models use binary user-item interactions: each unique `(user, item)` pair is counted once (duplicates collapsed; quantity ignored).
@@ -72,7 +80,7 @@ Interaction signal:
 
 ## Artifact Contract
 
-Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
+Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/`):
 
 - `train_metrics.json`
 - `validation_retrieval_metrics.json`
@@ -81,7 +89,7 @@ Training/evaluation artifacts (`artifacts/recommender/as_of=<recommender_max_eve
 - `shared_context.json`
 - `models/<selected_model_name>/...`
 
-Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
+Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/serving/`):
 
 - `item_embeddings.npy`
 - `item_embedding_index.json`
@@ -89,7 +97,7 @@ Retrieval artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`
 - `ann_index_meta.json`
 - `topk_recommendations.csv`
 
-Validation/report artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/`):
+Validation/report artifacts (`artifacts/recommender/as_of=<recommender_max_event_date>/report/`):
 
 - `output_validation_summary.json`
 - `output_interpretation.md`

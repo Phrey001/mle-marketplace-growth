@@ -14,7 +14,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from mle_marketplace_growth.recommender.helpers.config import load_recommender_runtime_config
+from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
 
 
 def _load_recall_at_20(path: Path) -> dict[str, float]:
@@ -33,8 +33,9 @@ def main() -> None:
     args = parser.parse_args()
 
     runtime = load_recommender_runtime_config(args.config)
-    validation = _load_recall_at_20(runtime.artifacts_dir / "validation_retrieval_metrics.json")
-    test = _load_recall_at_20(runtime.artifacts_dir / "test_retrieval_metrics.json")
+    paths = artifact_paths(runtime)
+    validation = _load_recall_at_20(paths.validation_retrieval_metrics)
+    test = _load_recall_at_20(paths.test_retrieval_metrics)
     values_by_model = {
         "popularity": [validation["popularity"], test["popularity"]],
         "mf": [validation["mf"], test["mf"]],

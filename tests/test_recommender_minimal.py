@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 
 from mle_marketplace_growth.recommender.helpers.data import _load_user_item_splits_df, _validate_split_chronology
-from mle_marketplace_growth.recommender.helpers.metrics import _user_eval_pool
-from mle_marketplace_growth.recommender.models.two_tower import _train_two_tower
+from mle_marketplace_growth.recommender.helpers.metrics import _build_user_eval_items
+from mle_marketplace_growth.recommender.models.two_tower import TwoTowerTrainParams, train_two_tower_candidate
 
 
 class RecommenderMinimalTests(unittest.TestCase):
@@ -90,7 +90,7 @@ class RecommenderMinimalTests(unittest.TestCase):
         train_items = {"i1", "i2"}
         gt_items = {"i3"}
         item_to_idx = {"i1": 0, "i2": 1, "i3": 2, "i4": 3}
-        pool = _user_eval_pool(train_items, gt_items, item_to_idx)
+        pool = _build_user_eval_items(train_items, gt_items, item_to_idx)
         self.assertIsNotNone(pool)
         candidates, _ = pool
         self.assertNotIn(0, candidates)
@@ -100,25 +100,32 @@ class RecommenderMinimalTests(unittest.TestCase):
         train = {"u1": {"i1", "i2"}, "u2": {"i2", "i3"}}
         user_to_idx = {"u1": 0, "u2": 1}
         item_to_idx = {"i1": 0, "i2": 1, "i3": 2}
-        first_user, first_item = _train_two_tower(
-            train=train,
-            user_to_idx=user_to_idx,
-            item_to_idx=item_to_idx,
+        params = TwoTowerTrainParams(
             embedding_dim=8,
             epochs=1,
             learning_rate=0.05,
             negative_samples=2,
+            batch_size=4096,
             l2_reg=1e-4,
+            max_grad_norm=1.0,
+            early_stop_rounds=0,
+            early_stop_k=20,
+            early_stop_tolerance=0.0,
+            temperature=1.0,
         )
-        second_user, second_item = _train_two_tower(
+        first_user, first_item = train_two_tower_candidate(
             train=train,
+            validation={},
             user_to_idx=user_to_idx,
             item_to_idx=item_to_idx,
-            embedding_dim=8,
-            epochs=1,
-            learning_rate=0.05,
-            negative_samples=2,
-            l2_reg=1e-4,
+            params=params,
+        )
+        second_user, second_item = train_two_tower_candidate(
+            train=train,
+            validation={},
+            user_to_idx=user_to_idx,
+            item_to_idx=item_to_idx,
+            params=params,
         )
         self.assertTrue(np.allclose(first_user, second_user))
         self.assertTrue(np.allclose(first_item, second_item))

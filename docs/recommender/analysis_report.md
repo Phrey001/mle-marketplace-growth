@@ -3,110 +3,143 @@
 ## Report Metadata
 
 - **Artifact source:** `artifacts/recommender/as_of=<recommender_max_event_date>/`
-- **Run scope:** single-cycle recommender demo from the recommended quickstart flow
-- **Update policy:** update this report (or append a new version) after reruns with material result changes
+- **Run scope:** main recommender pipeline plus two-tower tuning sweep
+- **Update policy:** refresh this report after reruns with material metric, selection, or tuning changes
 
 ## 1) Executive Summary
 
-- **Operational call to action:** keep `mf` as the current retrieval default, retain `popularity` as sanity baseline, and continue tuning `two_tower` as the challenger model.
-- **Two-tower Challenger Path (out of current scope):** prioritize richer user/item features in the feature store (for example RFM-style user behavior signals and item metadata features), as the most practical next step to close the gap vs MF.
-- **Run health:** all automated validation checks passed.
-- **Selected model:** `mf` (selection rule: maximize validation `Recall@20`).
-- **Business takeaway:** MF is currently strongest on offline retrieval quality; two-tower is improving but not yet the default.
-- **Scope:** offline ranking quality only (not causal commercial lift).
+| Item | Current readout |
+|---|---|
+| Selected model | `mf` |
+| Selection rule | maximize validation `Recall@20` |
+| Validation winner | `mf` at `0.052540` |
+| Test winner | `mf` at `0.043009` |
+| Best two-tower tuning trial | `trial_1` (`temperature=0.5`) |
+| Validation health | passed |
+
+- **Decision:** keep `mf` as the current retrieval default.
+- **Takeaway:** MF remains the strongest offline retrieval model. Two-tower beats popularity on recall and NDCG, but it still trails MF by a clear margin.
+- **Scope:** offline retrieval quality only; this report does not claim causal business lift.
 
 ## 2) Evaluation Setup
 
-- Pipeline run: `src/mle_marketplace_growth/recommender/run_pipeline.py`
-- Run used standard recommender contract from `docs/recommender/spec.md` (split/method/selection/metrics).
+- Pipeline entrypoint: `src/mle_marketplace_growth/recommender/run_pipeline.py`
+- Spec contract: `docs/recommender/spec.md`
+- Split rule: user-level chronological holdout at purchase-invoice grain
+- Prediction unit: ranked item IDs
+- Held-out truth unit: the item set from the user's held-out purchase invoice
+- Recommendation objective: discovery only
+- Offline candidate universe: full item universe after excluding train-seen items
+- Serving retrieval: FAISS HNSW ANN over item embeddings
+- Selection metric: validation `Recall@20`
+- Eligible users scored in current run: `1953`
 
-From `artifacts/recommender/as_of=<recommender_max_event_date>/train_metrics.json`:
-- embedding dim: `64`
-- epochs: `12`
-- learning rate: `0.003`
-- negative samples: `8`
-- batch size: `4096`
-- early-stop metric: `val_recall_at_k` (`K=20`, tolerance `0.0001`, rounds `4`)
-- temperature: `0.7`
-- normalize embeddings: `true` (cosine-style scoring)
-- L2 reg: `0.0001`
-- MF components: `64`
+Main run config from `artifacts/recommender/as_of=<recommender_max_event_date>/offline_eval/train_metrics.json`:
+
+| Model | Key settings |
+|---|---|
+| `mf` | `components=64`, `n_iter=15`, `weighting=tfidf` |
+| `two_tower` | `embedding_dim=64`, `epochs=12`, `lr=0.003`, `negatives=8`, `batch_size=4096`, `l2=0.0001`, `max_grad_norm=1.0`, `early_stop_rounds=4`, `early_stop_k=20`, `early_stop_tolerance=0.0001`, `temperature=0.7` |
 
 Benchmark note:
-- `popularity` and `mf` are baseline comparators for sanity-checking retrieval quality.
-- In this demo they are not fully tuned via wide hyperparameter search.
+- `popularity` and `mf` are baseline comparators.
+- The optional tuning sweep only changes two-tower hyperparameters; MF and popularity stay fixed.
 
 ## 3) Offline Retrieval Metrics
 
 How to read model comparison:
-- All three models are tested on the same users and same split.
-- `Recall@K` (Item Coverage): % of relevant items retrieved in top-K (primary selection uses `Recall@20`).
-- `NDCG@K`(Item Relevance):: position-aware ranking quality in top-K.
-- `HitRate@K` (Forgiving Item Coverage): % of users >= 1 relevant item in top-K (coverage-sanity guardrail).
-- Higher metric values are better.
-- The selected model is the one with highest validation `Recall@20`.
+- `Recall@20`: primary selection metric; fraction of held-out relevant items recovered in top-20.
+- `NDCG@20`: rank-sensitive quality; earlier relevant hits count more.
+- `HitRate@20`: fraction of users with at least one relevant item in the top-20.
+- Higher is better.
 
 ### Validation
 
-| Model | Recall@10 | NDCG@10 | HitRate@10 | Recall@20 | NDCG@20 | HitRate@20 |
-|---|---:|---:|---:|---:|---:|---:|
-| popularity | 0.036948 | 0.017600 | 0.036948 | 0.056382 | 0.022610 | 0.056382 |
-| mf | 0.083013 | 0.044036 | 0.083013 | 0.125000 | 0.054625 | 0.125000 |
-| two_tower | 0.067658 | 0.036133 | 0.067658 | 0.099568 | 0.044201 | 0.099568 |
+| Model | Recall@20 | NDCG@20 | HitRate@20 |
+|---|---:|---:|---:|
+| popularity | 0.028270 | 0.034973 | 0.310292 |
+| mf | 0.052540 | 0.063791 | 0.448541 |
+| two_tower | 0.036484 | 0.040071 | 0.295955 |
 
-Validation readout (Recall@20):
-- `mf` wins (`0.125000`)
-- vs `popularity`: `+0.068618`
-- vs `two_tower`: `+0.025432`
+Validation readout:
+- Winner: `mf`
+- Margin vs `popularity`: `+0.024270`
+- Margin vs `two_tower`: `+0.016056`
 
 ### Test
 
-| Model | Recall@10 | NDCG@10 | HitRate@10 | Recall@20 | NDCG@20 | HitRate@20 |
-|---|---:|---:|---:|---:|---:|---:|
-| popularity | 0.049916 | 0.024529 | 0.049916 | 0.067195 | 0.029049 | 0.067195 |
-| mf | 0.064795 | 0.033182 | 0.064795 | 0.095512 | 0.040882 | 0.095512 |
-| two_tower | 0.045356 | 0.022635 | 0.045356 | 0.072714 | 0.029535 | 0.072714 |
+| Model | Recall@20 | NDCG@20 | HitRate@20 |
+|---|---:|---:|---:|
+| popularity | 0.022910 | 0.027879 | 0.261649 |
+| mf | 0.043009 | 0.052643 | 0.399386 |
+| two_tower | 0.028361 | 0.032184 | 0.254480 |
 
-Test readout (Recall@20):
-- `mf` remains best (`0.095512`)
-- vs `popularity`: `+0.028317`
-- vs `two_tower`: `+0.022798`
+Test readout:
+- Winner: `mf`
+- Margin vs `popularity`: `+0.020099`
+- Margin vs `two_tower`: `+0.014648`
 
 Metric consistency check:
-- Secondary metrics (NDCG, HitRate) show no conflict with primary `Recall@20` selection.
-- Supporting evidence (test):
-  - `Recall@20`: `mf 0.095512 > two_tower 0.072714 > popularity 0.067195`
-  - `NDCG@20`: `mf 0.040882 > two_tower 0.029535 > popularity 0.029049`
-  - `HitRate@20`: `mf 0.095512 > two_tower 0.072714 > popularity 0.067195`
-- Interpretation: model ordering is directionally consistent across primary and guardrail metrics, so selecting `mf` by validation `Recall@20` is stable under offline evaluation.
+- `Recall@20`: `mf > two_tower > popularity`
+- `NDCG@20`: `mf > two_tower > popularity`
+- `HitRate@20`: `mf > popularity > two_tower`
+- Interpretation:
+  - MF is clearly strongest.
+  - Two-tower improves on recall and NDCG versus popularity, but not on hit rate.
+  - No metric suggests overturning the validation-based `mf` selection.
 
-## 4) Serving Outputs and Artifact Health
+## 4) Tuning Sweep Readout
+
+Source:
+- `artifacts/recommender/tuning/tuning_summary.json`
+
+| Item | Readout |
+|---|---|
+| Sweep strategy | `fixed_small_grid_two_tower_local` |
+| Best overall trial | `trial_default` |
+| Best overall selected model | `mf` |
+| Best overall validation `Recall@20` | `0.052540` |
+| Best overall test `Recall@20` | `0.043009` |
+| Best two-tower trial | `trial_1` |
+| Best two-tower override | `temperature=0.5` |
+| Best two-tower validation `Recall@20` | `0.038492` |
+| Best two-tower test `Recall@20` | `0.028924` |
+
+Tuning takeaway:
+- The tuning sweep did not change the overall winner; MF still dominates the leaderboard.
+- Lowering two-tower temperature from `0.7` to `0.5` produced the best two-tower result in this sweep.
+- The best tuned two-tower run improves modestly over the main-pipeline two-tower result, but the gain is too small to threaten MF.
+
+## 5) Serving Outputs and Artifact Health
 
 Key outputs present:
-- `artifacts/recommender/as_of=<recommender_max_event_date>/topk_recommendations.csv`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/selected_model_meta.json`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/shared_context.json`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/models/<selected_model_name>/...`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index.bin`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/ann_index_meta.json`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/output_validation_summary.json`
-- `artifacts/recommender/as_of=<recommender_max_event_date>/output_interpretation.md`
+- `offline_eval/selected_model_meta.json`
+- `offline_eval/shared_context.json`
+- `offline_eval/models/<selected_model_name>/...`
+- `serving/topk_recommendations.csv`
+- `serving/ann_index.bin`
+- `serving/ann_index_meta.json`
+- `report/output_validation_summary.json`
+- `report/output_interpretation.md`
 
 Validation summary status:
 - overall `passed=true`
 - selected model valid and present
+- validation/test metric rows present for all three models
 - metric bounds checks passed
 - recommendation output non-empty
-- ANN artifacts present and consistent with selected model
+- ANN artifacts present and aligned with the selected model
 
-## 5) Decision and Next Run Rule
+## 6) Decision and Next Run Rule
 
-- Current default candidate: `mf`.
-- Keep ranking by offline `Recall@20` for structural model selection consistency.
-- Keep quickstart workflow as source-of-truth reproducibility path.
-- Two-tower architecture: keep the simpler embedding-only towers as the repo default; extra hidden-layer tower variants are out of scope for the current implementation.
+- Current default candidate: `mf`
+- Keep selecting by validation `Recall@20`
+- Keep `popularity` as the sanity baseline
+- Keep two-tower as the challenger model family
+- If two-tower is revisited, the most defensible next step is richer feature-store inputs rather than more cosmetic model churn
 
-## 6) Plots (Optional)
-One model comparison bar chart for `Recall@20` (validation and test) across `popularity`, `mf`, `two_tower`.
+## 7) Plot
+
+Recall@20 comparison chart:
 
 ![Recommender Recall@20 Comparison](../../artifacts/recommender/report_assets/model_recall_at20_comparison.png)

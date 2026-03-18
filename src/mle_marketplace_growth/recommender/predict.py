@@ -47,7 +47,7 @@ def _load_selected_scorer(selected_model_name: str, model_dir: Path):
 
 
 def _prepare_serving_artifacts(
-    artifacts_dir: Path,
+    serving_dir: Path,
     selected_model_name: str,
     item_matrix: np.ndarray,
     item_to_idx: dict[str, int],
@@ -55,20 +55,20 @@ def _prepare_serving_artifacts(
     """What: Materialize serving artifacts (embeddings/index metadata/ANN metadata).
     Why: Predict stage owns serving outputs, separate from model training outputs.
     """
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-    np.save(artifacts_dir / "item_embeddings.npy", item_matrix)
+    serving_dir.mkdir(parents=True, exist_ok=True)
+    np.save(serving_dir / "item_embeddings.npy", item_matrix)
     write_json(
-        artifacts_dir / "item_embedding_index.json",
+        serving_dir / "item_embedding_index.json",
         {
             "selected_model_name": selected_model_name,
             "item_to_row_index": item_to_idx,
             "embedding_shape": list(item_matrix.shape),
         },
     )
-    ann_metadata = _write_ann_index(artifacts_dir, item_matrix)
-    ann_meta_path = artifacts_dir / "ann_index_meta.json"
+    ann_metadata = _write_ann_index(serving_dir, item_matrix)
+    ann_meta_path = serving_dir / "ann_index_meta.json"
     write_json(ann_meta_path, ann_metadata)
-    return artifacts_dir / "ann_index.bin", ann_meta_path
+    return serving_dir / "ann_index.bin", ann_meta_path
 
 
 def _load_ann_index(ann_index_path: Path, ann_meta_path: Path) -> faiss.Index:
@@ -85,6 +85,10 @@ def _load_ann_index(ann_index_path: Path, ann_meta_path: Path) -> faiss.Index:
 def run_predict(config_path: str) -> None:
     """What: Score users to produce Top-K recommender output CSV.
     Why: Reuses frozen selected-model artifacts to generate serving-style retrieval outputs.
+
+    Serving policy:
+    - This path is discovery-oriented and excludes train-seen items from recommendations.
+    - Repeat-purchase / buy-again recommendations would be a separate objective.
     """
     # ===== Load Config =====
     runtime = load_recommender_runtime_config(config_path)
@@ -112,7 +116,7 @@ def run_predict(config_path: str) -> None:
     user_to_idx = shared_runtime_context.user_to_idx
     train_user_items = shared_runtime_context.train_user_items
     item_to_idx = shared_runtime_context.item_to_idx
-    model_dir = runtime.artifacts_dir / selected_model_meta.model_artifact_dir
+    model_dir = selected_model_meta_path.parent / selected_model_meta.model_artifact_dir
     scorer = _load_selected_scorer(selected, model_dir)
     item_matrix = scorer.item_matrix()
 
@@ -120,7 +124,7 @@ def run_predict(config_path: str) -> None:
     # Serving artifacts are intentionally produced in predict.py (not train_and_select.py)
     # to keep training and serving responsibilities separate.
     ann_index_path, ann_meta_path = _prepare_serving_artifacts(
-        artifacts_dir=runtime.artifacts_dir,
+        serving_dir=paths.serving_dir,
         selected_model_name=selected,
         item_matrix=item_matrix,
         item_to_idx=item_to_idx,
@@ -139,6 +143,7 @@ def run_predict(config_path: str) -> None:
         if user_id not in user_to_idx:
             continue
         user_idx = user_to_idx[user_id]
+        # Discovery-oriented serving: do not recommend items already seen in training.
         seen = train_user_items.get(user_id, set())
         seen_indices = {item_to_idx[item_id] for item_id in seen if item_id in item_to_idx}
         ranked_items = scorer.rank_user_topk(

@@ -22,8 +22,14 @@ from mle_marketplace_growth.recommender.constants import DEVICE, EARLY_STOP_METR
 from mle_marketplace_growth.recommender.models import RankedItems
 
 
+# ===== Runtime Scorer =====
+
 @dataclass(frozen=True)
 class TwoTowerValidationCache:
+    """What: Hold indexed validation targets and seen-item masks for early stopping.
+    Why: Avoids rebuilding the same validation lookup structures every epoch.
+    """
+
     user_indices: list[int]
     target_item_indices: list[set[int]]
     seen_train_item_indices: list[list[int]]
@@ -31,6 +37,10 @@ class TwoTowerValidationCache:
 
 @dataclass(frozen=True)
 class TwoTowerTrainParams:
+    """What: Hold two-tower-only training hyperparameters.
+    Why: Keeps neural-model config ownership local to the two-tower module.
+    """
+
     embedding_dim: int
     epochs: int
     learning_rate: float
@@ -48,15 +58,27 @@ class TwoTowerTrainParams:
 class TwoTowerScorer:
     """What: Score two-tower-model candidates for evaluation and prediction.
     Why: Keeps two-tower scoring behavior local to the two-tower module.
+
+    This scorer is the runtime wrapper over exported user/item embeddings.
+    It is separate from the train-time `TwoTowerModel` defined below.
+
+    Method split:
+    - `score_candidate_indices(...)` is the offline-evaluation path
+    - `rank_user_topk(...)` is the serving/prediction path
     """
 
     user_embeddings: np.ndarray
     item_embeddings: np.ndarray
     model_name: str = "two_tower"
 
+    # Offline evaluation: score one fixed candidate pool for one user.
     def score_candidate_indices(self, user_index: int, candidate_item_indices: list[int]) -> np.ndarray:
+        """What: Score one user's candidate item indices with embedding dot products.
+        Why: Gives offline evaluation one consistent scorer contract across models.
+        """
         return np.asarray(self.item_embeddings[candidate_item_indices].dot(self.user_embeddings[user_index]))
 
+    # Serving/prediction: rank one user's unseen items into a top-k list.
     def rank_user_topk(
         self,
         *,
@@ -66,13 +88,22 @@ class TwoTowerScorer:
         seen_indices: set[int],
         ann_index: faiss.Index | None,
     ) -> RankedItems:
+        """What: Rank one user's top-k unseen items through the ANN index.
+        Why: Reuses the selected two-tower scorer during batch prediction.
+        """
         if len(seen_indices) >= item_count:
             return RankedItems(item_indices=[], scores=[])
         if ann_index is None:
             raise ValueError("ANN index is required for two-tower scoring.")
+
+        # Use the two-tower user embedding as the ANN query vector.
         user_vector = self.user_embeddings[user_index].reshape(1, -1)
-        oversample = min(item_count, max(top_k + len(seen_indices) + 20, top_k * 3))
-        _, indices = ann_index.search(user_vector.astype(np.float32), oversample)
+
+        # Query more than top-k so we still have enough unseen items after filtering.
+        ann_query_k = min(item_count, top_k + len(seen_indices) + 20)
+        _, indices = ann_index.search(user_vector.astype(np.float32), ann_query_k)
+
+        # Keep the first unseen ANN results as the final recommendation list.
         ranked_item_indices: list[int] = []
         for item_idx in indices[0].tolist():
             if item_idx < 0 or item_idx in seen_indices:
@@ -80,12 +111,19 @@ class TwoTowerScorer:
             ranked_item_indices.append(int(item_idx))
             if len(ranked_item_indices) >= top_k:
                 break
-        ranked_scores = [float(self.item_embeddings[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
-        return RankedItems(item_indices=ranked_item_indices, scores=ranked_scores)
 
+        # Recompute exact returned scores for the kept top-k items.
+        ranked_item_scores = [float(self.item_embeddings[item_idx].dot(user_vector[0])) for item_idx in ranked_item_indices]
+        return RankedItems(item_indices=ranked_item_indices, scores=ranked_item_scores)
+
+    # Shared runtime utility: used by serving artifact generation across model families.
     def item_matrix(self) -> np.ndarray:
+        """What: Expose the item embedding matrix for ANN indexing.
+        Why: Prediction builds one ANN index from the selected model's item vectors.
+        """
         return self.item_embeddings
 
+    # Shared runtime utility: load the scorer from persisted model artifacts.
     @classmethod
     def load_from_dir(cls, model_dir: Path) -> "TwoTowerScorer":
         """What: Load two-tower scorer artifacts from one model directory.
@@ -96,6 +134,8 @@ class TwoTowerScorer:
             item_embeddings=np.load(model_dir / "item_embeddings.npy"),
         )
 
+
+# ===== Train-Time Model =====
 
 class _PositivePairDataset(Dataset):
     """What: Expose positive (user_idx, item_idx) rows as a PyTorch dataset.
@@ -125,6 +165,9 @@ class UserEncoder(torch.nn.Module):
             self.embedding.weight.normal_(mean=0.0, std=0.05)
 
     def forward(self, user_indices: torch.Tensor) -> torch.Tensor:
+        """What: Look up user embeddings for a batch of user indices.
+        Why: Keeps the user-tower interface explicit inside the two-tower model.
+        """
         return self.embedding(user_indices)
 
 
@@ -140,12 +183,18 @@ class ItemEncoder(torch.nn.Module):
             self.embedding.weight.normal_(mean=0.0, std=0.05)
 
     def forward(self, item_indices: torch.Tensor) -> torch.Tensor:
+        """What: Look up item embeddings for a batch of item indices.
+        Why: Keeps the item-tower interface explicit inside the two-tower model.
+        """
         return self.embedding(item_indices)
 
 
 class TwoTowerModel(torch.nn.Module):
     """What: Bundle user and item encoders into one explicit two-tower model.
     Why: Keeps the neural model definition clearer than managing raw embedding tables separately.
+
+    This is the train-time neural module. In this repo, serving uses exported
+    embedding arrays through `TwoTowerScorer` rather than the live PyTorch model.
     """
 
     def __init__(self, user_count: int, item_count: int, embedding_dim: int) -> None:
@@ -154,9 +203,15 @@ class TwoTowerModel(torch.nn.Module):
         self.item_encoder = ItemEncoder(item_count, embedding_dim)
 
     def user_embeddings(self, user_indices: torch.Tensor) -> torch.Tensor:
+        """What: Produce user-tower embeddings for one batch of users.
+        Why: Makes the model call sites clearer than reaching into the encoder directly.
+        """
         return self.user_encoder(user_indices)
 
     def item_embeddings(self, item_indices: torch.Tensor) -> torch.Tensor:
+        """What: Produce item-tower embeddings for one batch of items.
+        Why: Makes the model call sites clearer than reaching into the encoder directly.
+        """
         return self.item_encoder(item_indices)
 
 
@@ -167,6 +222,8 @@ def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     return matrix / np.maximum(norms, 1e-12)
 
+
+# ===== Training Data Prep =====
 
 def _interaction_pairs(
     interactions: dict[str, set[str]],
@@ -187,7 +244,7 @@ def _interaction_pairs(
     return np.asarray(pairs, dtype=np.int64)
 
 
-def _build_validation_cache(
+def _build_validation_eval_cache(
     train: dict[str, set[str]],
     validation: dict[str, set[str]],
     user_to_idx: dict[str, int],
@@ -214,6 +271,20 @@ def _build_validation_cache(
         target_item_indices=target_item_indices,
         seen_train_item_indices=seen_train_item_indices,
     )
+
+
+# ===== Training Loop =====
+
+def _resolve_training_device(device: str) -> torch.device:
+    """What: Resolve the train-time torch device from the project device setting.
+    Why: Keeps device validation and CUDA-specific setup out of the main training loop.
+    """
+    if device != "auto":
+        raise ValueError("device must be 'auto' in this project.")
+    device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device_obj.type == "cuda":
+        torch.cuda.manual_seed_all(42)
+    return device_obj
 
 
 def _validation_recall_at_k(
@@ -259,7 +330,7 @@ def _validation_recall_at_k(
         return recall_sum / len(validation_cache.user_indices)
 
 
-def _train_two_tower_from_pairs(
+def _fit_two_tower_embeddings(
     *,
     positive_array: np.ndarray,
     user_count: int,
@@ -309,11 +380,7 @@ def _train_two_tower_from_pairs(
 
     np_rng = np.random.default_rng(42)
     torch.manual_seed(42)
-    if device != "auto":
-        raise ValueError("device must be 'auto' in this project.")
-    device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device_obj.type == "cuda":
-        torch.cuda.manual_seed_all(42)
+    device_obj = _resolve_training_device(device)
     if verbose:
         print(f"[two_tower] device={device_obj.type}")
     if positive_array.size == 0:
@@ -423,60 +490,7 @@ def _train_two_tower_from_pairs(
     return final_user, final_item
 
 
-def _train_two_tower(
-    train: dict[str, set[str]],
-    user_to_idx: dict[str, int],
-    item_to_idx: dict[str, int],
-    embedding_dim: int,
-    epochs: int,
-    learning_rate: float,
-    negative_samples: int,
-    l2_reg: float,
-    batch_size: int = 4096,
-    max_grad_norm: float = 1.0,
-    early_stop_rounds: int = 0,
-    early_stop_metric: str = "val_recall_at_k",
-    early_stop_k: int = 20,
-    early_stop_tolerance: float = 0.0,
-    validation_interactions: dict[str, set[str]] | None = None,
-    temperature: float = 1.0,
-    normalize_embeddings: bool = True,
-    device: str = "auto",
-    verbose: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
-    """What: Backward-compatible wrapper for tests and existing call sites.
-    Why: Keeps the public helper name stable while the model-specific module owns the real training loop.
-    """
-    positive_array = _interaction_pairs(train, user_to_idx, item_to_idx)
-    validation_cache = (
-        _build_validation_cache(train, validation_interactions, user_to_idx, item_to_idx)
-        if validation_interactions
-        else TwoTowerValidationCache([], [], [])
-    )
-    return _train_two_tower_from_pairs(
-        positive_array=positive_array,
-        user_count=len(user_to_idx),
-        item_count=len(item_to_idx),
-        embedding_dim=embedding_dim,
-        epochs=epochs,
-        learning_rate=learning_rate,
-        negative_samples=negative_samples,
-        l2_reg=l2_reg,
-        batch_size=batch_size,
-        max_grad_norm=max_grad_norm,
-        early_stop_rounds=early_stop_rounds,
-        early_stop_metric=early_stop_metric,
-        early_stop_k=early_stop_k,
-        early_stop_tolerance=early_stop_tolerance,
-        validation_user_indices=validation_cache.user_indices,
-        validation_target_indices=validation_cache.target_item_indices,
-        validation_seen_indices=validation_cache.seen_train_item_indices,
-        temperature=temperature,
-        normalize_embeddings=normalize_embeddings,
-        device=device,
-        verbose=verbose,
-    )
-
+# ===== Public Training Entry =====
 
 def train_two_tower_candidate(
     train: dict[str, set[str]],
@@ -490,8 +504,8 @@ def train_two_tower_candidate(
     Why: Keeps two-tower-specific fitting and knobs separate from other models.
     """
     positive_train_pairs = _interaction_pairs(train, user_to_idx, item_to_idx)
-    validation_cache = _build_validation_cache(train, validation, user_to_idx, item_to_idx)
-    tt_user_embeddings, tt_item_embeddings = _train_two_tower_from_pairs(
+    validation_cache = _build_validation_eval_cache(train, validation, user_to_idx, item_to_idx)
+    tt_user_embeddings, tt_item_embeddings = _fit_two_tower_embeddings(
         positive_array=positive_train_pairs,
         user_count=len(user_to_idx),
         item_count=len(item_to_idx),

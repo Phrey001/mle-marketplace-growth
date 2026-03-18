@@ -14,8 +14,6 @@
       "early_stop_k": 20,
       "early_stop_tolerance": 0.0001,
       "temperature": 0.7,
-      "tower_hidden_dim": 0,
-      "tower_dropout": 0.0,
       "mf_components": 64,
       "mf_n_iter": 15,
       "mf_weighting": "tfidf"
@@ -23,16 +21,16 @@
     "selected_model_name": "mf",
     "validation_recall_at_20": 0.05254,
     "test_recall_at_20": 0.043009,
-    "two_tower_validation_recall_at_20": 0.037291,
-    "two_tower_test_recall_at_20": 0.028564
+    "two_tower_validation_recall_at_20": 0.037384,
+    "two_tower_test_recall_at_20": 0.028252
   },
   "best_two_tower_trial": {
-    "trial_name": "trial_6",
+    "trial_name": "trial_1",
     "config": {
       "embedding_dim": 64,
       "epochs": 12,
       "learning_rate": 0.003,
-      "negative_samples": 16,
+      "negative_samples": 8,
       "batch_size": 4096,
       "l2_reg": 0.0001,
       "max_grad_norm": 1.0,
@@ -40,8 +38,6 @@
       "early_stop_k": 20,
       "early_stop_tolerance": 0.0001,
       "temperature": 0.5,
-      "tower_hidden_dim": 0,
-      "tower_dropout": 0.0,
       "mf_components": 64,
       "mf_n_iter": 15,
       "mf_weighting": "tfidf"
@@ -49,8 +45,8 @@
     "selected_model_name": "mf",
     "validation_recall_at_20": 0.05254,
     "test_recall_at_20": 0.043009,
-    "two_tower_validation_recall_at_20": 0.039131,
-    "two_tower_test_recall_at_20": 0.029236
+    "two_tower_validation_recall_at_20": 0.038492,
+    "two_tower_test_recall_at_20": 0.028924
   },
   "trials": [
     {
@@ -67,8 +63,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.7,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -76,8 +70,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037291,
-      "two_tower_test_recall_at_20": 0.028564
+      "two_tower_validation_recall_at_20": 0.037384,
+      "two_tower_test_recall_at_20": 0.028252
     },
     {
       "trial_name": "trial_1",
@@ -93,8 +87,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.5,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -102,8 +94,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.039075,
-      "two_tower_test_recall_at_20": 0.028779
+      "two_tower_validation_recall_at_20": 0.038492,
+      "two_tower_test_recall_at_20": 0.028924
     },
     {
       "trial_name": "trial_2",
@@ -119,8 +111,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 1.0,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -128,8 +118,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.035424,
-      "two_tower_test_recall_at_20": 0.029146
+      "two_tower_validation_recall_at_20": 0.035182,
+      "two_tower_test_recall_at_20": 0.026193
     },
     {
       "trial_name": "trial_3",
@@ -145,8 +135,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.7,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -154,8 +142,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037228,
-      "two_tower_test_recall_at_20": 0.028051
+      "two_tower_validation_recall_at_20": 0.037203,
+      "two_tower_test_recall_at_20": 0.028366
     },
     {
       "trial_name": "trial_4",
@@ -171,8 +159,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.7,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -180,8 +166,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.035892,
-      "two_tower_test_recall_at_20": 0.027326
+      "two_tower_validation_recall_at_20": 0.036439,
+      "two_tower_test_recall_at_20": 0.027596
     },
     {
       "trial_name": "trial_5",
@@ -197,8 +183,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0005,
         "temperature": 0.7,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -206,8 +190,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.037291,
-      "two_tower_test_recall_at_20": 0.028564
+      "two_tower_validation_recall_at_20": 0.037384,
+      "two_tower_test_recall_at_20": 0.028252
     },
     {
       "trial_name": "trial_6",
@@ -223,8 +207,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.5,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -232,8 +214,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.039131,
-      "two_tower_test_recall_at_20": 0.029236
+      "two_tower_validation_recall_at_20": 0.03843,
+      "two_tower_test_recall_at_20": 0.029086
     },
     {
       "trial_name": "trial_7",
@@ -249,8 +231,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0001,
         "temperature": 0.5,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -258,8 +238,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.03835,
-      "two_tower_test_recall_at_20": 0.02804
+      "two_tower_validation_recall_at_20": 0.036837,
+      "two_tower_test_recall_at_20": 0.027691
     },
     {
       "trial_name": "trial_8",
@@ -275,8 +255,6 @@
         "early_stop_k": 20,
         "early_stop_tolerance": 0.0005,
         "temperature": 0.5,
-        "tower_hidden_dim": 0,
-        "tower_dropout": 0.0,
         "mf_components": 64,
         "mf_n_iter": 15,
         "mf_weighting": "tfidf"
@@ -284,8 +262,8 @@
       "selected_model_name": "mf",
       "validation_recall_at_20": 0.05254,
       "test_recall_at_20": 0.043009,
-      "two_tower_validation_recall_at_20": 0.038991,
-      "two_tower_test_recall_at_20": 0.027809
+      "two_tower_validation_recall_at_20": 0.036865,
+      "two_tower_test_recall_at_20": 0.028129
     }
   ]
 }

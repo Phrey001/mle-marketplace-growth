@@ -25,7 +25,7 @@ from mle_marketplace_growth.recommender.helpers.artifacts import (
     TrainArtifactContext,
     _write_train_artifacts,
 )
-from mle_marketplace_growth.recommender.helpers.config import load_recommender_runtime_config
+from mle_marketplace_growth.recommender.helpers.config import artifact_paths, load_recommender_runtime_config
 from mle_marketplace_growth.recommender.helpers.data import (
     _build_split_interactions,
     _load_item_index_df,
@@ -34,18 +34,18 @@ from mle_marketplace_growth.recommender.helpers.data import (
     _load_user_item_splits_df,
     _validate_split_chronology,
 )
-from mle_marketplace_growth.recommender.score_candidates import (
-    score_mf_candidate,
-    score_popularity_candidate,
-    score_two_tower_candidate,
+from mle_marketplace_growth.recommender.evaluate_models import (
+    evaluate_mf_model,
+    evaluate_popularity_model,
+    evaluate_two_tower_model,
 )
 from mle_marketplace_growth.recommender.models.mf import MFTrainParams
 from mle_marketplace_growth.recommender.models.two_tower import TwoTowerTrainParams
 from mle_marketplace_growth.recommender.select_best_model import select_best_model
-from mle_marketplace_growth.recommender.train_candidates import (
-    train_mf_artifacts,
-    train_popularity_artifacts,
-    train_two_tower_artifacts,
+from mle_marketplace_growth.recommender.train_models import (
+    train_mf_state,
+    train_popularity_state,
+    train_two_tower_state,
 )
 
 
@@ -175,6 +175,18 @@ def _log_training_context(
     )
 
 
+def _log_test_metrics(*, test_metrics: list[dict]) -> None:
+    """What: Log held-out test metrics for all evaluated models.
+    Why: Keeps experiment reporting consistent across the full comparison set.
+    """
+    for result in test_metrics:
+        print(
+            "[recommender.train_and_select] test:",
+            result["model_name"],
+            f"Recall@{EVALUATION_TOP_K}={result['metrics'].get(f'Recall@{EVALUATION_TOP_K}', 0.0):.6f}",
+        )
+
+
 def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     """What: Train recommender candidates, select one model, and write artifacts.
     Why: Provides the in-process training-stage entrypoint reused by the CLI, pipeline,
@@ -182,11 +194,12 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     """
     # ===== Load Config And Validate Inputs =====
     runtime = load_recommender_runtime_config(config_path)
+    paths = artifact_paths(runtime)
     cfg = runtime.cfg
     user_item_splits_path = runtime.user_item_splits_path
     user_index_path = runtime.user_index_path
     item_index_path = runtime.item_index_path
-    output_dir = output_dir_override if output_dir_override is not None else runtime.artifacts_dir
+    output_dir = output_dir_override if output_dir_override is not None else paths.offline_eval_dir
     mf_params = _load_mf_train_params(cfg)
     two_tower_params = _load_two_tower_train_params(cfg)
     _validate_train_inputs(user_item_splits_path, user_index_path, item_index_path, mf_params, two_tower_params)
@@ -200,17 +213,17 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     _log_training_context(split_interactions, user_index, item_index, mf_params, two_tower_params)
 
     # ===== Train All Candidate Models On The Same Split =====
-    popularity_artifacts = train_popularity_artifacts(
+    popularity_state = train_popularity_state(
         user_item_splits_df=user_item_splits_df,
         item_index_df=item_index_df,
     )
-    mf_artifacts = train_mf_artifacts(
+    mf_state = train_mf_state(
         split_interactions=split_interactions,
         user_index=user_index,
         item_index=item_index,
         mf_params=mf_params,
     )
-    two_tower_artifacts = train_two_tower_artifacts(
+    two_tower_state = train_two_tower_state(
         split_interactions=split_interactions,
         user_index=user_index,
         item_index=item_index,
@@ -218,53 +231,53 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     )
 
     # ===== Score Candidates Offline And Choose One Model =====
-    popularity_validation_metrics = score_popularity_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.validation,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        popularity_artifacts=popularity_artifacts,
+    popularity_validation_metrics = evaluate_popularity_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.validation,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        popularity_state=popularity_state,
     )
-    mf_validation_metrics = score_mf_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.validation,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        mf_artifacts=mf_artifacts,
+    mf_validation_metrics = evaluate_mf_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.validation,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        mf_state=mf_state,
     )
-    two_tower_validation_metrics = score_two_tower_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.validation,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        two_tower_artifacts=two_tower_artifacts,
+    two_tower_validation_metrics = evaluate_two_tower_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.validation,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        two_tower_state=two_tower_state,
     )
-    popularity_test_metrics = score_popularity_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.test,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        popularity_artifacts=popularity_artifacts,
+    popularity_test_metrics = evaluate_popularity_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.test,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        popularity_state=popularity_state,
     )
-    mf_test_metrics = score_mf_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.test,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        mf_artifacts=mf_artifacts,
+    mf_test_metrics = evaluate_mf_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.test,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        mf_state=mf_state,
     )
-    two_tower_test_metrics = score_two_tower_candidate(
-        users=user_index.ids,
-        train_rows=split_interactions.train,
-        target_rows=split_interactions.test,
-        user_to_idx=user_index.id_to_idx,
-        item_to_idx=item_index.id_to_idx,
-        two_tower_artifacts=two_tower_artifacts,
+    two_tower_test_metrics = evaluate_two_tower_model(
+        user_ids=user_index.ids,
+        train_user_items=split_interactions.train,
+        target_user_items=split_interactions.test,
+        user_id_to_idx=user_index.id_to_idx,
+        item_id_to_idx=item_index.id_to_idx,
+        two_tower_state=two_tower_state,
     )
     validation_metrics = [
         popularity_validation_metrics,
@@ -278,6 +291,8 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
     ]
     selected_model_name = select_best_model(
         validation_metrics=validation_metrics,
+    )
+    _log_test_metrics(
         test_metrics=test_metrics,
     )
 
@@ -298,9 +313,9 @@ def run_train_and_select(config_path: str, output_dir_override=None) -> None:
         ),
         candidate_artifacts=CandidateModelArtifactOutputs(
             artifacts_by_model={
-                "popularity": popularity_artifacts,
-                "mf": mf_artifacts,
-                "two_tower": two_tower_artifacts,
+                "popularity": popularity_state,
+                "mf": mf_state,
+                "two_tower": two_tower_state,
             },
         ),
         selection=SelectionArtifactOutputs(

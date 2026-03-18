@@ -38,10 +38,11 @@ def _recall_at_20(metrics_path: Path, model_name: str) -> float:
 
 
 def _trial_result(output_dir: Path, trial_name: str, config: dict[str, str | int | float]) -> dict:
-    train_metrics = json.loads((output_dir / "train_metrics.json").read_text(encoding="utf-8"))
+    offline_eval_dir = output_dir / "offline_eval"
+    train_metrics = json.loads((offline_eval_dir / "train_metrics.json").read_text(encoding="utf-8"))
     selected_model = str(train_metrics["selected_model_name"])
-    validation_metrics_path = output_dir / "validation_retrieval_metrics.json"
-    test_metrics_path = output_dir / "test_retrieval_metrics.json"
+    validation_metrics_path = offline_eval_dir / "validation_retrieval_metrics.json"
+    test_metrics_path = offline_eval_dir / "test_retrieval_metrics.json"
     return {
         "trial_name": trial_name,
         "config": config,
@@ -57,8 +58,9 @@ def _remove_tuning_bloat(output_dir: Path) -> None:
     """What: Remove per-trial artifacts not needed for tuning review.
     Why: Keeps the tuning output contract focused on config plus validation/test evidence.
     """
+    offline_eval_dir = output_dir / "offline_eval"
     for artifact_name in ["train_metrics.json"]:
-        artifact_path = output_dir / artifact_name
+        artifact_path = offline_eval_dir / artifact_name
         if artifact_path.exists():
             artifact_path.unlink()
 
@@ -108,7 +110,7 @@ def main() -> None:
         }
         trial_config_path = trial_dir / "trial_config.yaml"
         trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False), encoding="utf-8")
-        run_train_and_select(config_path=str(trial_config_path), output_dir_override=trial_dir)
+        run_train_and_select(config_path=str(trial_config_path), output_dir_override=trial_dir / "offline_eval")
         results.append(_trial_result(trial_dir, trial_name, trial_overrides))
         _remove_tuning_bloat(trial_dir)
 

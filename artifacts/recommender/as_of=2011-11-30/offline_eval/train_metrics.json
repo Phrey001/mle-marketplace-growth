@@ -1,0 +1,25 @@
+{
+  "selected_model_name": "mf",
+  "selection_rule": "maximize_validation_Recall@20",
+  "k_value": 20,
+  "model_config": {
+    "mf": {
+      "mf_components": 64,
+      "mf_n_iter": 15,
+      "mf_weighting": "tfidf"
+    },
+    "two_tower": {
+      "embedding_dim": 64,
+      "epochs": 12,
+      "learning_rate": 0.003,
+      "negative_samples": 8,
+      "batch_size": 4096,
+      "l2_reg": 0.0001,
+      "max_grad_norm": 1.0,
+      "early_stop_rounds": 4,
+      "early_stop_k": 20,
+      "early_stop_tolerance": 0.0001,
+      "temperature": 0.7
+    }
+  }
+}
