@@ -1,7 +1,14 @@
-# Purchase Propensity Engine — Spec
+# Purchase Propensity — Spec
 
 High-level architecture lives in `docs/architecture.pptx`.
-This file is the implementation contract for the purchase propensity engine.
+This file is the design contract for the purchase propensity system.
+
+## What This System Does
+
+- Estimates which users are most likely to purchase in the near term
+- Predicts conditional revenue so users can be ranked by expected value, not just raw propensity
+- Compares ML targeting against Random and RFM policy baselines under a fixed budget
+- Separates structural window selection from later fixed-window retraining
 
 ## Objective
 
@@ -16,10 +23,12 @@ Predict purchase propensity and allocate budget with expected-value targeting:
 
 ## Core Contract
 
+Non-negotiable behavior rules:
+
 | Area | Contract |
 |---|---|
 | Split mode | Strict monthly `10/1/1` (10 train + 1 validation + 1 test snapshots) |
-| Datetime anchor | `panel_end_date` in cycle YAML; must be a monthly snapshot date (1st of month); derive prior 11 monthly snapshots |
+| Datetime anchor | Each run is anchored to a monthly snapshot date and uses the prior 11 monthly snapshots |
 | Structural mode (initial) | `window_selection_mode=sensitivity` |
 | Structural mode (retrain) | `window_selection_mode=fixed` |
 | Policy evaluation | Budget-constrained Top-K (`K=floor(budget/cost_per_user)`) on validation + test |
@@ -27,22 +36,24 @@ Predict purchase propensity and allocate budget with expected-value targeting:
 | Scope boundary | Offline evidence only; not causal proof |
 
 Datetime ownership/bounds:
-- Shared silver data availability is defined by `configs/shared.yaml`.
-- Engine datetime is owned by purchase propensity config (`panel_end_date`).
-- Engine datetime may be narrower than shared bounds, but must not exceed shared silver event-date bounds (fail-fast on violation).
+- Shared source data defines the maximum available event-date range.
+- Each purchase propensity run chooses one monthly snapshot date within that shared range.
+- The system may operate on a narrower window than the shared data availability, but not beyond it.
 
-## Pipeline Map
+## System Flow
 
-| Stage | Script | Key output(s) |
-|---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_purchase_propensity` | 12 snapshot partitions of `propensity_train_dataset`, `user_features_asof` |
-| Model training | `mle_marketplace_growth.purchase_propensity.train` | `offline_eval/propensity_model.pkl`, `offline_eval/train_metrics.json`, `offline_eval/validation_predictions.csv`, `offline_eval/test_predictions.csv` |
-| Structural sensitivity (initial) | `mle_marketplace_growth.purchase_propensity.window_sensitivity` | `offline_eval/window_sensitivity.json`, `offline_eval/window_validation_dashboard.png` |
-| Policy backtest | `mle_marketplace_growth.purchase_propensity.policy_budget_evaluation` | `offline_eval/offline_policy_budget_validation.json`, `offline_eval/offline_policy_budget_test.json` |
-| Artifact checks/report text | `mle_marketplace_growth.purchase_propensity.validate_artifact_outputs` | `report/output_validation_summary.json`, `report/output_interpretation.md` |
-| Serving-style batch scoring | `mle_marketplace_growth.purchase_propensity.predict` | `serving_batch/as_of_date=YYYY-MM-DD/prediction_scores.csv` |
+High-level lifecycle only:
+
+1. Build monthly user snapshots and point-in-time features.
+2. Train the propensity and conditional revenue models.
+3. Run structural window sensitivity in the initial cycle, then freeze those decisions for retraining.
+4. Backtest budget-constrained targeting policies on validation and test.
+5. Validate the outputs and generate interpretation text.
+6. Optionally materialize serving-style batch scores.
 
 ## Model/Window Contract
+
+Modeling and window-selection rules:
 
 | Item | Contract |
 |---|---|
@@ -53,35 +64,32 @@ Datetime ownership/bounds:
 | Fixed mode behavior | Uses config values directly; no structural re-search |
 | Sensitivity mode behavior | Runs window sensitivity and freezes structural decision |
 
-Feature window notes:
-1. SQL: 30d short-term lookback windows (`frequency_30d`, `monetary_30d`) – Always include.
-2. SQL: Longer-term feature lookback window days (`frequency_*`, `monetary_*`, `avg_basket_value_*`) – Include depending on lookback window config (e.g. `90d`).
-3. Training/serving: Cap longer-term monetary lookback by excluding outliers to reduce skew to fit model towards majority of users.
-4. SQL: Skip 30‑day average basket size because most users have too few purchases in 30 days for a stable average. Still keep 30‑day counts and spend totals because even small activity in the last 30d is a useful signal.
-5. SQL: `label_*` features – Include depending on prediction window config.
+Feature window rules:
 
-Feature matrix example (`train.py`):
-- Before vectorization: one row is a dict, e.g. `{"recency_days": 12.0, "frequency_30d": 0.0, ..., "country": "US"}`.
-- After `DictVectorizer.fit/transform`: `train_matrix` is a sparse numeric matrix with shape `(n_train_rows, n_features)`, e.g. `(50000, 8)`.
-- Categorical values (like `country`) are encoded into numeric columns by the vectorizer.
+| Feature group | Rule |
+|---|---|
+| 30d short-term lookback (`frequency_30d`, `monetary_30d`) | Always include |
+| Longer-term lookback (`frequency_*`, `monetary_*`, `avg_basket_value_*`) | Include according to configured lookback window |
+| Longer-term monetary features | Cap outliers during training/serving to reduce skew toward extreme users |
+| 30d average basket size | Omit because most users have too few purchases in 30 days for a stable average |
+| 30d counts and spend totals | Keep because even small recent activity is still useful signal |
+| `label_*` features | Include according to configured prediction window |
 
-## Artifact Contract
+## Output Contract
 
-Per cycle (`artifacts/purchase_propensity/<cycle>/`):
+Output categories only; exact commands live in the purchase propensity quickstart.
 
-- `offline_eval/propensity_model.pkl`
-- `offline_eval/train_metrics.json`
-- `offline_eval/validation_predictions.csv`
-- `offline_eval/test_predictions.csv`
-- `offline_eval/offline_policy_budget_validation.json`
-- `offline_eval/offline_policy_budget_test.json`
-- `report/output_validation_summary.json`
-- `report/output_interpretation.md`
+Per cycle outputs:
+- trained model state
+- training summary
+- validation and test predictions
+- validation and test policy backtest summaries
+- validation summary
+- interpretation markdown
 
-Initial cycle only (sensitivity mode):
-
-- `offline_eval/window_sensitivity.json`
-- `offline_eval/window_validation_dashboard.png`
+Initial sensitivity cycle only:
+- window sensitivity summary
+- sensitivity dashboard
 
 ## Acceptance Criteria
 
@@ -89,5 +97,3 @@ Initial cycle only (sensitivity mode):
 - Structural decision is frozen and recorded (or fixed mode is explicit).
 - Validation/test policy outputs each contain ML/Random/RFM.
 - Serving output is schema-valid when Stage 3 is run.
-
-Run commands: `docs/purchase_propensity/quickstart.md`.

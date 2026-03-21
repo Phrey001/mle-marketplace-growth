@@ -1,7 +1,14 @@
-# Recommender Engine — Spec
+# Recommender — Spec
 
 High-level architecture lives in `docs/architecture.pptx`.
-This file is the implementation contract for the recommender engine.
+This file is the design contract for the recommender system.
+
+## What This System Does
+
+- Ranks item candidates for each user from implicit historical interactions
+- Compares a popularity baseline, matrix factorization, and a two-tower neural retriever
+- Selects the best model using validation retrieval quality
+- Keeps offline evaluation exact while using ANN-style retrieval only for serving artifacts
 
 ## Objective
 
@@ -14,6 +21,8 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 - Scope note: offline ranking metrics are not causal business-lift evidence.
 
 ## Core Contract
+
+Non-negotiable behavior rules:
 
 | Area | Contract |
 |---|---|
@@ -29,28 +38,29 @@ Build a Stage-1 retrieval engine that outputs personalized Top-K item candidates
 | ANN backend | FAISS HNSW inner-product index, fail-fast if unavailable |
 
 Artifact organization:
-- Run outputs are grouped into three artifact categories:
-  - offline evaluation artifacts
-  - serving artifacts
-  - validation/report artifacts
-- Exact output paths and run commands live in `docs/recommender/quickstart.md`.
+- offline evaluation outputs
+- serving outputs
+- validation/report outputs
 
 Datetime ownership/bounds:
-- Shared silver data availability is defined by `configs/shared.yaml`.
-- Engine datetime is owned by recommender config (`recommender_min_event_date`, `recommender_max_event_date`).
-- Engine datetime may be narrower than shared bounds, but must not exceed shared silver event-date bounds (fail-fast on violation).
-- Recommender feature store keeps only the latest canonical build (no experiment tracking); reruns overwrite prior outputs.
+- Shared source data defines the maximum available event-date range.
+- The recommender system chooses its own analysis window within that shared range.
+- That window may be narrower than shared data availability, but not wider.
+- The recommender feature store keeps only the latest canonical build; reruns overwrite prior outputs.
 
-## Pipeline Map
+## System Flow
 
-| Stage | Script | Key output(s) |
-|---|---|---|
-| Feature-store build | `mle_marketplace_growth.feature_store.build_gold_recommender` | interaction events, user-item split assignments, user index, item index |
-| Train/evaluate/select | `mle_marketplace_growth.recommender.train_and_select` | training summary, validation/test retrieval metrics, selected-model metadata, shared runtime context, selected-model exported artifacts |
-| Build retrieval artifacts | `mle_marketplace_growth.recommender.predict` | item embedding matrix, item embedding index, ANN index + metadata, Top-K recommendations |
-| Output validation/report text | `mle_marketplace_growth.recommender.validate_outputs` | validation summary, interpretation markdown |
+High-level lifecycle only:
+
+1. Build the user-item interaction view and chronological split assignments.
+2. Train and compare the candidate retrievers offline.
+3. Select the best model by validation `Recall@20`.
+4. Materialize serving-style retrieval artifacts for the selected model.
+5. Validate the run outputs and generate interpretation text.
 
 ## Model Contract
+
+Model and evaluation rules:
 
 | Item | Contract |
 |---|---|
@@ -69,25 +79,34 @@ Prediction/evaluation unit:
 
 Design note:
 - A deeper one-hidden-layer tower variant was considered earlier, but the current repo keeps embedding-only towers to avoid extra complexity without clear benefit for this demo implementation.
-- Training and scoring are already split by recommender model family, while shared evaluation and prediction load the selected model through a common scorer contract.
-- Offline evaluation belongs to the `train_and_select` stage. `helpers/metrics.py` provides the ranking/metric primitives, not a separate pipeline stage.
+- Training is model-specific, while offline evaluation and prediction reuse a shared scoring contract.
 - The current engine optimizes for discovery recommendations only; repeat-purchase / buy-again flows would be a separate recommendation objective.
 
 Interaction signal:
 - Implemented models use binary user-item interactions: each unique `(user, item)` pair is counted once (duplicates collapsed; quantity ignored).
 - This is the standard implicit-feedback baseline used in many recommender systems.
-- Model-specific transformations are then applied to the interaction signals:
-  - Popularity: log-scaled counts of unique users interacting with each item
-  - MF: TF-IDF weighted interaction matrix
-  - Two-tower: uses binary pairs directly
-- Out of scope (dataset-specific): the feature-store gold tables still retain purchase quantity (`weight`) for potential future extensions:
-  - count-weighted interactions: repeated interactions increase signal strength (retain repeated user-item interactions; no deduplication; quantity used)
-  - log-scaled interaction strength: reduces the impact of extreme purchase quantities
-  - revenue-aware recommendation: prioritizes high-value transactions
 
-## Artifact Contract
+Model-specific interaction treatment:
 
-Offline evaluation artifacts:
+| Model | Interaction treatment |
+|---|---|
+| Popularity | Log-scaled counts of unique users interacting with each item |
+| MF | TF-IDF weighted interaction matrix |
+| Two-tower | Binary positive user-item pairs directly |
+
+Retained for possible future extensions, but out of scope in the current repo:
+
+| Future extension | Meaning |
+|---|---|
+| Count-weighted interactions | Repeated interactions increase signal strength; quantity is used |
+| Log-scaled interaction strength | Large purchase quantities are damped before modeling |
+| Revenue-aware recommendation | High-value transactions influence recommendation priority |
+
+## Output Contract
+
+Output categories only; exact commands live in the recommender quickstart.
+
+Offline evaluation outputs:
 - training summary
 - validation retrieval metrics
 - test retrieval metrics
@@ -95,13 +114,12 @@ Offline evaluation artifacts:
 - shared runtime context
 - selected-model exported artifacts
 
-Serving artifacts:
-- item embedding matrix
-- item embedding index
-- ANN index and metadata
+Serving outputs:
+- item embedding state for retrieval
+- ANN retrieval state and metadata
 - Top-K recommendations
 
-Validation/report artifacts:
+Validation/report outputs:
 - validation summary
 - interpretation markdown
 
@@ -112,5 +130,3 @@ Validation/report artifacts:
 - Selected model and selection rule are explicit in the run artifacts.
 - ANN artifacts are present and consistent with the selected model.
 - Top-K recommendations are non-empty and schema-valid.
-
-Run commands: `docs/recommender/quickstart.md`.
