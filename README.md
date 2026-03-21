@@ -11,7 +11,7 @@ The slide images below are exported from [docs/architecture.pptx](docs/architect
 
 - Purchase Propensity: which users should be targeted first when marketing budget is limited?
 - Recommender: which products should be shown next to improve discovery?
-- Shared Feature Layer: point-in-time data preparation and time-aware feature conventions for both systems
+- Shared data foundation: both systems use time-aware data preparation to avoid leakage
 
 After that, use [docs/README.md](docs/README.md) to navigate the detailed specs and quickstarts.
 
